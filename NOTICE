@@ -1,0 +1,35 @@
+ForkSight
+==========
+
+Third-party notices for the local chess insights runtime.
+
+python-chess
+------------
+Used for PGN parsing, board replay, FEN, castling, piece maps, and Syzygy
+probing. Distributed under the GNU GPL v3+ with an additional linking
+exception permitting use from this application. See
+https://github.com/niklasf/python-chess
+
+chessground
+-----------
+Board widget, GPL-3.0 or later, loaded at runtime from a CDN or a local
+copy. Source: https://github.com/lichess-org/chessground
+This project does not bundle or link chessground into a binary.
+
+Stockfish
+---------
+Official Stockfish is GPL-3.0. The user downloads the binary separately
+and ForkSight runs it as a child process over UCI. It is neither linked
+nor bundled. Source: https://github.com/official-stockfish/Stockfish
+
+DuckDB
+------
+Embedded analytical database, MIT. https://duckdb.org
+
+Lichess
+-------
+Accuracy formulas and the phase Divider are reimplemented from published
+description. Lichess is credited; lila source is AGPL and is not copied.
+https://lichess.org/page/accuracy
+Population cubes, when present, are derived from the Lichess open database
+and credited in data/README.md.

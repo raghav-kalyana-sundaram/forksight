@@ -1,0 +1,17 @@
+user_data/
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+*.egg-info/
+dist/
+build/
+.DS_Store
+.idea/
+.vscode/
+*.duckdb
+*.duckdb.wal
+.env
+.env.local
