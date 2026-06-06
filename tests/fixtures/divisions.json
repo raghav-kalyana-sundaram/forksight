@@ -1,0 +1,4 @@
+{
+  "note": "Lichess game JSON divisions for golden tests. Capture via GET https://lichess.org/game/export/{id}?evals=false once and commit.",
+  "games": []
+}
