@@ -1,0 +1,10 @@
+[Event "ForkSight fixture"]
+[Site "https://lichess.org/aborted1"]
+[White "Alice"]
+[Black "Bob"]
+[Result "*"]
+[UTCDate "2025.06.01"]
+[TimeControl "300+0"]
+[Termination "Abandoned"]
+
+*

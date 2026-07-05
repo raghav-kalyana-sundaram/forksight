@@ -1,0 +1,13 @@
+[Event "ForkSight fixture"]
+[Site "https://lichess.org/short001"]
+[White "Alice"]
+[Black "Bob"]
+[Result "1-0"]
+[UTCDate "2025.01.02"]
+[UTCTime "12:00:00"]
+[WhiteElo "1610"]
+[BlackElo "1580"]
+[TimeControl "300+0"]
+[Opening "King's Pawn"]
+
+1. e4 { [%clk 0:05:00] } e5 { [%clk 0:05:00] } 2. Qh5 { [%clk 0:04:50] } Nc6 { [%clk 0:04:55] } 3. Bc4 { [%clk 0:04:40] } Nf6 { [%clk 0:04:40] } 4. Qxf7# { [%clk 0:04:30] } 1-0
