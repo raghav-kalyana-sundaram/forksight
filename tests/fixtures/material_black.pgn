@@ -1,0 +1,11 @@
+[Event "ForkSight fixture"]
+[Site "https://lichess.org/matblk01"]
+[White "Opponent"]
+[Black "Alice"]
+[Result "0-1"]
+[UTCDate "2025.07.01"]
+[WhiteElo "1600"]
+[BlackElo "1600"]
+[TimeControl "600+0"]
+
+1. e4 e5 2. Nf3 Nc6 3. Bb5 a6 4. Bxc6 dxc6 5. Nxe5 Qd4 6. Nf3 Qxe4+ 7. Qe2 Qxe2+ 8. Kxe2 Nf6 9. Re1 Be6 10. Kf1 O-O-O 11. d3 Bc5 12. Be3 Bxe3 13. Rxe3 Rhe8 14. Nbd2 Nd5 15. Re1 Nf4 16. g3 Nd5 17. a3 Bf5 18. Ne5 f6 19. Nec4 b5 20. Ne3 Nxe3+ 21. Rxe3 Rxe3 22. fxe3 Bxd3+ 23. cxd3 Rxd3 24. Ke2 Rd6 25. Nb3 Re6+ 26. Kf2 Re2+ 27. Kf3 Rxb2 28. Nd4 c5 29. Nb3 c4 30. Nd4 c3 31. Nb3 c2 0-1

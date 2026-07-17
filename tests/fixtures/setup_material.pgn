@@ -1,0 +1,13 @@
+[Event "ForkSight fixture"]
+[Site "https://lichess.org/setupmat"]
+[White "Opponent"]
+[Black "Alice"]
+[Result "1/2-1/2"]
+[UTCDate "2025.08.01"]
+[WhiteElo "1600"]
+[BlackElo "1600"]
+[TimeControl "600+0"]
+[SetUp "1"]
+[FEN "4kb2/8/8/8/8/8/8/4K2R w - - 0 1"]
+
+1. Rh2 Be7 2. Rh1 Bf8 1/2-1/2
