@@ -1,0 +1,142 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>ForkSight</title>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/chessground@9.1.1/assets/chessground.base.css">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/chessground@9.1.1/assets/chessground.brown.css">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/chessground@9.1.1/assets/chessground.cburnett.css">
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <header class="mast">
+    <div class="brand">
+      <span class="wordmark">ForkSight</span>
+      <nav>
+        <button data-page="games" class="on">Games</button>
+        <button data-page="insights">Insights</button>
+        <button data-page="improve">Improve</button>
+        <button data-page="analyze">Analyze</button>
+        <button data-page="board">Board</button>
+        <button data-page="sql">SQL</button>
+      </nav>
+    </div>
+    <form id="query-form" class="query-bar" autocomplete="off">
+      <label for="q">Query</label>
+      <input id="q" name="q" spellcheck="false" placeholder="tc:blitz color:white material:KRPvKP  ·  tokens AND together">
+      <button type="submit">Run</button>
+    </form>
+    <p id="grain" class="grain"></p>
+  </header>
+
+  <main>
+    <section id="page-games" class="page on">
+      <div class="toolbar">
+        <label class="file">
+          Import PGN
+          <input id="pgn-files" type="file" accept=".pgn,.zip" multiple>
+        </label>
+        <span id="import-report" class="muted"></span>
+      </div>
+      <table class="dense" id="games-table">
+        <thead>
+          <tr>
+            <th>Date</th><th>Color</th><th>Opponent</th><th>Rating</th>
+            <th>TC</th><th>ECO</th><th>Opening</th><th>Result</th><th>Acc</th>
+          </tr>
+        </thead>
+        <tbody></tbody>
+      </table>
+    </section>
+
+    <section id="page-insights" class="page">
+      <div id="insights-root"></div>
+      <details class="sql-preview">
+        <summary>Generated SQL</summary>
+        <pre id="insights-sql"></pre>
+      </details>
+    </section>
+
+    <section id="page-improve" class="page">
+      <p class="lede">Two lists. Versus peers needs a population cube. Versus myself is always available. Ranking uses the conservative bound of the gap after shrinkage. Grey rows have an interval that crosses zero.</p>
+      <label>Nmin <input id="nmin" type="number" value="30" min="1" class="num"></label>
+      <div id="improve-root"></div>
+    </section>
+
+    <section id="page-analyze" class="page">
+      <form id="analyze-form" class="settings">
+        <label>Mode
+          <select name="mode"><option value="depth">depth</option><option value="movetime">movetime</option></select>
+        </label>
+        <label>Depth <input name="depth" type="number" value="15" min="8" max="30"></label>
+        <label>Movetime ms <input name="movetime_ms" type="number" value="200"></label>
+        <label>MultiPV <input name="multipv" type="number" value="1" min="1" max="5"></label>
+        <label class="check"><input name="skip_book" type="checkbox" checked> Skip book</label>
+        <label class="check"><input name="only_unanalyzed" type="checkbox" checked> Only unanalyzed</label>
+        <label class="check"><input name="eco" type="checkbox"> Eco (half threads)</label>
+        <div class="row">
+          <button type="submit">Start</button>
+          <button type="button" id="btn-pause">Pause</button>
+          <button type="button" id="btn-resume">Resume</button>
+          <button type="button" id="btn-stop">Stop after this game</button>
+          <button type="button" id="btn-bench">Benchmark</button>
+        </div>
+      </form>
+      <p class="muted">Full-CPU workload, comparable to compiling. Use AC power. Eco mode halves the thread count.</p>
+      <div id="analyze-status" class="status-block"></div>
+      <ol id="analyze-log" class="log"></ol>
+    </section>
+
+    <section id="page-board" class="page">
+      <div class="board-layout">
+        <div>
+          <div id="board" class="cg-wrap"></div>
+          <canvas id="eval-graph" width="512" height="88"></canvas>
+        </div>
+        <div class="board-side">
+          <div id="board-facts"></div>
+          <ol id="movelist" class="movelist"></ol>
+        </div>
+      </div>
+    </section>
+
+    <section id="page-sql" class="page">
+      <p class="lede">Read-only. <code>v_games</code>, <code>v_moves</code>, <code>v_spans</code>. SELECT or WITH only.</p>
+      <textarea id="sql-text" rows="6">SELECT tc_class, COUNT(*) n FROM v_games GROUP BY 1 ORDER BY n DESC</textarea>
+      <button type="button" id="sql-run">Run</button>
+      <div id="sql-out"></div>
+    </section>
+  </main>
+
+  <footer>
+    <span id="foot-db"></span>
+    <span id="foot-import"></span>
+    <label>Report depth
+      <select id="report-depth"></select>
+    </label>
+    <button type="button" id="btn-settings">Aliases</button>
+  </footer>
+
+  <dialog id="settings-dialog">
+    <form id="settings-form" method="dialog">
+      <h2>Settings</h2>
+      <label>Aliases (comma-separated usernames)
+        <input name="aliases" placeholder="your-lichess-name">
+      </label>
+      <label class="check"><input name="include_observed" type="checkbox"> Include observed games</label>
+      <label>Stockfish path <input name="stockfish_path"></label>
+      <label>Syzygy path <input name="syzygy_path"></label>
+      <menu>
+        <button value="cancel">Close</button>
+        <button id="settings-save" value="default">Save</button>
+      </menu>
+    </form>
+  </dialog>
+
+  <script src="/query.js"></script>
+  <script src="/charts.js"></script>
+  <script src="/board.js" type="module"></script>
+  <script src="/app.js"></script>
+</body>
+</html>
