@@ -4,6 +4,117 @@ function $(sel) {
   return document.querySelector(sel);
 }
 
+const TC_CHIPS = [
+  { label: "Blitz + rapid", q: "" },
+  { label: "Blitz", q: "tc:blitz" },
+  { label: "Rapid", q: "tc:rapid" },
+  { label: "Bullet", q: "tc:bullet" },
+  { label: "Classical", q: "tc:classical" },
+  { label: "All", q: "tc:all" },
+];
+const COLOR_CHIPS = [
+  { label: "Either colour", key: "color", value: "" },
+  { label: "White", key: "color", value: "white" },
+  { label: "Black", key: "color", value: "black" },
+];
+const ASK_CHIPS = [
+  { label: "Long castle", q: "castled:long" },
+  { label: "KRPvKP", q: "material:KRPvKP" },
+  { label: "Endgame", q: "phase:endgame" },
+];
+
+function tokenMap(q) {
+  const map = {};
+  String(q || "")
+    .trim()
+    .split(/\s+/)
+    .forEach((part) => {
+      const i = part.indexOf(":");
+      if (i > 0) map[part.slice(0, i)] = part.slice(i + 1);
+    });
+  return map;
+}
+
+function setTokens(patch) {
+  const map = tokenMap(state.q);
+  Object.entries(patch).forEach(([k, v]) => {
+    if (!v) delete map[k];
+    else map[k] = v;
+  });
+  state.q = Object.entries(map)
+    .map(([k, v]) => `${k}:${v}`)
+    .join(" ");
+  $("#q").value = state.q;
+  refresh();
+}
+
+function renderFilters() {
+  const map = tokenMap(state.q);
+  const tcActive = map.tc == null ? "" : map.tc === "all" ? "tc:all" : "tc:" + map.tc;
+  const tc = TC_CHIPS.map(
+    (c) => `<button type="button" data-setq="${escapeAttr(c.q)}" class="${c.q === tcActive || (c.q === "" && !map.tc) ? "on" : ""}">${c.label}</button>`
+  ).join("");
+  const color = COLOR_CHIPS.map(
+    (c) =>
+      `<button type="button" data-color="${escapeAttr(c.value)}" class="${(map.color || "") === c.value ? "on" : ""}">${c.label}</button>`
+  ).join("");
+  const ask = ASK_CHIPS.map((c) => `<button type="button" data-ask="${escapeAttr(c.q)}">${c.label}</button>`).join("");
+  $("#filters").innerHTML = `
+    <span class="group"><span class="glabel">Time</span>${tc}</span>
+    <span class="group"><span class="glabel">Colour</span>${color}</span>
+    <span class="group"><span class="glabel">Ask</span>${ask}</span>
+  `;
+  $("#filters").querySelectorAll("[data-setq]").forEach((b) => {
+    b.onclick = () => {
+      const next = b.dataset.setq;
+      if (next === "") setTokens({ tc: "" });
+      else if (next === "tc:all") setTokens({ tc: "all" });
+      else setTokens({ tc: next.slice(3) });
+    };
+  });
+  $("#filters").querySelectorAll("[data-color]").forEach((b) => {
+    b.onclick = () => setTokens({ color: b.dataset.color });
+  });
+  $("#filters").querySelectorAll("[data-ask]").forEach((b) => {
+    b.onclick = () => {
+      const [k, v] = b.dataset.ask.split(":");
+      setTokens({ [k]: v });
+    };
+  });
+}
+
+function paintCue(meta, importExtra) {
+  const el = $("#cue");
+  if (importExtra) {
+    el.innerHTML = importExtra;
+    return;
+  }
+  const aliases = meta.aliases || [];
+  const observed = meta.observed_games || 0;
+  const names = meta.observed_names || [];
+  if (observed > 0 && names.length) {
+    const chips = names
+      .map((n) => `<button type="button" data-alias="${escapeAttr(n)}">${escapeHtml(n)}</button>`)
+      .join(" · ");
+    el.innerHTML = `${observed} game${observed === 1 ? "" : "s"} in the file ${aliases.length ? (observed === 1 ? "doesn't" : "don't") + " match alias " + aliases.map(escapeHtml).join(", ") : "have no alias set"}. Claim a name: ${chips}`;
+    el.querySelectorAll("[data-alias]").forEach((b) => {
+      b.onclick = async () => {
+        const s = await api.get("/api/settings");
+        const next = Array.from(new Set([...(s.aliases || []), b.dataset.alias]));
+        await api.post("/api/settings", { aliases: next });
+        refresh();
+      };
+    });
+    return;
+  }
+  if (!aliases.length) {
+    el.innerHTML = `Set your Lichess username under <button type="button" id="cue-alias">Aliases</button> so results are yours, not the opponent's.`;
+    $("#cue-alias").onclick = () => $("#btn-settings").click();
+    return;
+  }
+  el.textContent = "";
+}
+
 function show(page) {
   state.page = page;
   document.querySelectorAll(".page").forEach((el) => el.classList.toggle("on", el.id === "page-" + page));
@@ -13,6 +124,7 @@ function show(page) {
 
 async function refresh() {
   const q = state.q;
+  renderFilters();
   try {
     if (state.page === "games") {
       const data = await api.get("/api/games?q=" + encodeURIComponent(q));
@@ -95,6 +207,7 @@ async function paintFooter() {
   if (meta.version_drift && Object.values(meta.version_drift).some((n) => n > 0)) {
     $("#foot-import").textContent += "  ·  derivation versions differ — recompute available";
   }
+  paintCue(meta);
 }
 
 document.querySelectorAll("nav button").forEach((b) => {
@@ -115,8 +228,8 @@ $("#pgn-files").onchange = async (e) => {
   try {
     const report = await api.post("/api/import", fd, false);
     $("#import-report").textContent =
-      `inserted ${report.inserted}  ·  duplicates ${report.duplicates}  ·  aborted ${report.dropped_aborted}  ·  unparseable ${report.dropped_unparseable}`;
-    refresh();
+      `inserted ${report.inserted}  ·  yours ${report.personal ?? 0}  ·  unmatched ${report.observed ?? 0}  ·  duplicates ${report.duplicates}`;
+    await refresh();
   } catch (err) {
     $("#import-report").textContent = String(err.message || err);
   }
@@ -178,6 +291,7 @@ $("#settings-save").onclick = async (e) => {
     syzygy_path: f.syzygy_path.value,
   });
   $("#settings-dialog").close();
+  refresh();
 };
 
 $("#report-depth").onchange = async () => {

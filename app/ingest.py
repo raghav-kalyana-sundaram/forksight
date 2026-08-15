@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import io
 import zipfile
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 import chess
 import chess.pgn
@@ -21,6 +21,17 @@ class ImportReport:
     dropped_aborted: int = 0
     dropped_incomplete: int = 0
     files: int = 0
+    personal: int = 0
+    observed: int = 0
+    names: list[str] = field(default_factory=list)
+
+
+@dataclass
+class GameIngest:
+    status: str
+    you_color: str | None = None
+    white: str = ""
+    black: str = ""
 
 
 def _clock_centis(node: chess.pgn.GameNode) -> int | None:
@@ -59,8 +70,16 @@ def ingest_files(store: Store, files: list[tuple[str, bytes]], aliases: list[str
             game = chess.pgn.read_game(handle)
             if game is None:
                 break
-            status = ingest_game(store, game, aliases)
-            setattr(report, status, getattr(report, status) + 1)
+            out = ingest_game(store, game, aliases)
+            setattr(report, out.status, getattr(report, out.status) + 1)
+            if out.status in ("inserted", "replaced"):
+                if out.you_color:
+                    report.personal += 1
+                else:
+                    report.observed += 1
+                    for name in (out.white, out.black):
+                        if name and name not in report.names:
+                            report.names.append(name)
     return report
 
 
@@ -70,11 +89,11 @@ def json_aliases(store: Store) -> list[str]:
     return json.loads(store.setting("aliases", "[]") or "[]")
 
 
-def ingest_game(store: Store, game: chess.pgn.Game, aliases: list[str]) -> str:
+def ingest_game(store: Store, game: chess.pgn.Game, aliases: list[str]) -> GameIngest:
     headers = game.headers
     board = game.board()
     if game.errors:
-        return "dropped_unparseable"
+        return GameIngest("dropped_unparseable")
 
     moves_out: list[tuple] = []
     sans: list[str] = []
@@ -131,7 +150,7 @@ def ingest_game(store: Store, game: chess.pgn.Game, aliases: list[str]) -> str:
         )
 
     if ply == 0:
-        return "dropped_aborted"
+        return GameIngest("dropped_aborted")
 
     variant = (headers.get("Variant") or "standard").strip()
     tc = classify.parse_time_control(headers.get("TimeControl"))
@@ -143,7 +162,7 @@ def ingest_game(store: Store, game: chess.pgn.Game, aliases: list[str]) -> str:
     existing = store.fetchone("SELECT has_clocks FROM games WHERE fingerprint = ?", (fp,))
     if existing:
         if existing[0] or not clocks_found:
-            return "duplicates"
+            return GameIngest("duplicates", you, headers.get("White", ""), headers.get("Black", ""))
         # incoming has clocks and stored does not — replace
         replace = True
     else:
@@ -226,7 +245,8 @@ def ingest_game(store: Store, game: chess.pgn.Game, aliases: list[str]) -> str:
         move_tuples,
     )
     _insert_spans(store, fp, moves_out)
-    return "replaced" if action == "replaced" else "inserted"
+    status = "replaced" if action == "replaced" else "inserted"
+    return GameIngest(status, you, headers.get("White", ""), headers.get("Black", ""))
 
 
 def _insert_spans(store: Store, game_id: str, moves_out: list[dict]) -> None:
@@ -265,3 +285,55 @@ def recompute_classification(store: Store) -> int:
         ingest_game(store, game, aliases)
         n += 1
     return n
+
+
+def apply_aliases(store: Store, aliases: list[str]) -> int:
+    """Re-tag you_color, material_you, and castling from stored names. No replay."""
+    rows = store.fetchall("SELECT game_id, white, black FROM games")
+    n = 0
+    for game_id, white, black in rows:
+        you = classify.you_color(white or "", black or "", aliases)
+        store.execute("UPDATE games SET you_color = ? WHERE game_id = ?", (you, game_id))
+        if you == "black":
+            store.execute(
+                """
+                UPDATE moves SET material_you =
+                  split_part(material_wb, 'v', 2) || 'v' || split_part(material_wb, 'v', 1)
+                WHERE game_id = ?
+                """,
+                (game_id,),
+            )
+            store.execute(
+                """
+                UPDATE spans SET material_you =
+                  split_part(material_wb, 'v', 2) || 'v' || split_part(material_wb, 'v', 1)
+                WHERE game_id = ?
+                """,
+                (game_id,),
+            )
+        else:
+            store.execute("UPDATE moves SET material_you = material_wb WHERE game_id = ?", (game_id,))
+            store.execute("UPDATE spans SET material_you = material_wb WHERE game_id = ?", (game_id,))
+        castles = store.fetchall(
+            "SELECT ply, mover, is_castling FROM moves WHERE game_id = ? AND is_castling IS NOT NULL ORDER BY ply",
+            (game_id,),
+        )
+        user_castled = opp_castled = None
+        user_castle_ply = None
+        for ply, mover, kind in castles:
+            if you == mover and user_castled is None:
+                user_castled = kind
+                user_castle_ply = ply
+            elif you and you != mover and opp_castled is None:
+                opp_castled = kind
+        opposite = bool(user_castled and opp_castled and user_castled != opp_castled)
+        store.execute(
+            """
+            UPDATE games SET user_castled = ?, opp_castled = ?, opposite_side = ?, user_castle_ply = ?
+            WHERE game_id = ?
+            """,
+            (user_castled, opp_castled, opposite, user_castle_ply, game_id),
+        )
+        n += 1
+    return n
+

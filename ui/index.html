@@ -24,10 +24,12 @@
     </div>
     <form id="query-form" class="query-bar" autocomplete="off">
       <label for="q">Query</label>
-      <input id="q" name="q" spellcheck="false" placeholder="tc:blitz color:white material:KRPvKP  ·  tokens AND together">
+      <input id="q" name="q" spellcheck="false" placeholder="castled:long   material:KRPvKP   or use the filters">
       <button type="submit">Run</button>
     </form>
+    <div id="filters" class="filters"></div>
     <p id="grain" class="grain"></p>
+    <p id="cue" class="cue"></p>
   </header>
 
   <main>
@@ -39,6 +41,7 @@
         </label>
         <span id="import-report" class="muted"></span>
       </div>
+      <p class="hint">Click a row to step through the game. Insights groups this list. Analyze fills the accuracy column.</p>
       <table class="dense" id="games-table">
         <thead>
           <tr>
@@ -121,8 +124,8 @@
   <dialog id="settings-dialog">
     <form id="settings-form" method="dialog">
       <h2>Settings</h2>
-      <label>Aliases (comma-separated usernames)
-        <input name="aliases" placeholder="your-lichess-name">
+      <label>Aliases — your Lichess username as it appears in the PGN
+        <input name="aliases" placeholder="lichess-username">
       </label>
       <label class="check"><input name="include_observed" type="checkbox"> Include observed games</label>
       <label>Stockfish path <input name="stockfish_path"></label>

@@ -238,6 +238,10 @@ class Store:
             self.set_setting("syzygy_path", data["syzygy_path"] or "")
         if "report_depth" in data:
             self.set_setting("report_depth", str(data["report_depth"] or ""))
+        if "aliases" in data:
+            from app.ingest import apply_aliases
+
+            apply_aliases(self, data["aliases"] or [])
 
     def version_drift(self) -> dict[str, int]:
         row = self.fetchone(
@@ -318,6 +322,28 @@ class Store:
             "game_count": int(n[0] or 0),
             "depth_options": self.depth_options(),
             "version_drift": self.version_drift(),
+            "aliases": json.loads(self.setting("aliases", "[]") or "[]"),
+            "personal_games": int(
+                (self.fetchone("SELECT COUNT(*) FROM games WHERE you_color IS NOT NULL") or [0])[0] or 0
+            ),
+            "observed_games": int(
+                (self.fetchone("SELECT COUNT(*) FROM games WHERE you_color IS NULL") or [0])[0] or 0
+            ),
+            "observed_names": [
+                r[0]
+                for r in self.fetchall(
+                    """
+                    SELECT name FROM (
+                      SELECT white AS name FROM games WHERE you_color IS NULL
+                      UNION
+                      SELECT black AS name FROM games WHERE you_color IS NULL
+                    )
+                    WHERE name IS NOT NULL AND name <> ''
+                    ORDER BY 1
+                    LIMIT 12
+                    """
+                )
+            ],
         }
 
     def open_panel_query(self, sql: str, row_cap: int = 500):

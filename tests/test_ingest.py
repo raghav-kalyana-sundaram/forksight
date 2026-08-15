@@ -27,3 +27,16 @@ def test_dedup(store: Store, fixtures):
     assert r1.inserted == 1
     assert r2.duplicates == 1
     assert store.fetchone("SELECT COUNT(*) FROM games")[0] == 1
+
+
+def test_alias_claim_reveals_game(store: Store, fixtures):
+    from app.ingest import apply_aliases
+
+    data = (fixtures / "short.pgn").read_bytes()
+    report = ingest_files(store, [("short.pgn", data)], aliases=[])
+    assert report.observed == 1
+    assert "Alice" in report.names
+    assert store.fetchone("SELECT you_color FROM games")[0] is None
+    apply_aliases(store, ["Alice"])
+    assert store.fetchone("SELECT you_color FROM games")[0] == "white"
+

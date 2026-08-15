@@ -118,11 +118,11 @@ def compile_query(
     if not include_observed:
         wheres.append("g.you_color IS NOT NULL")
 
-    tc = q.tokens.get("tc")
-    if tc:
-        wheres.append("g.tc_class = ?")
-        params.append(tc.lower())
-    elif default_tc and "tc" not in q.tokens:
+    if tc := q.tokens.get("tc"):
+        if tc.lower() not in ("all", "*"):
+            wheres.append("g.tc_class = ?")
+            params.append(tc.lower())
+    elif default_tc:
         placeholders = ", ".join(["?"] * len(default_tc))
         wheres.append(f"g.tc_class IN ({placeholders})")
         params.extend(default_tc)
