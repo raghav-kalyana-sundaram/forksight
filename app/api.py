@@ -58,6 +58,7 @@ class AnalyzeIn(BaseModel):
     skip_book: bool = True
     only_unanalyzed: bool = True
     eco: bool = False
+    game_id: str | None = None
 
 
 class SqlIn(BaseModel):
@@ -212,6 +213,25 @@ def analyze_bench(body: AnalyzeIn, x_forksight_request: str | None = Header(defa
 @router.get("/analyze/status")
 def analyze_status() -> dict[str, Any]:
     return analyzer().snapshot()
+
+
+@router.get("/analyze/engine")
+def analyze_engine() -> dict[str, Any]:
+    return analyzer().engine_info()
+
+
+@router.post("/analyze/download-stockfish")
+def analyze_download(x_forksight_request: str | None = Header(default=None)) -> dict[str, Any]:
+    require_header(x_forksight_request)
+    import runpy
+
+    from app.paths import TOOLS
+
+    runpy.run_path(str(TOOLS / "download_stockfish.py"), run_name="__main__")
+    info = analyzer().engine_info()
+    if info["found"]:
+        store().set_setting("stockfish_path", info["path"])
+    return info
 
 
 @router.post("/sql")

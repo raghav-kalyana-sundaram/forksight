@@ -72,7 +72,11 @@ function uciSquares(uci) {
   return [uci.slice(0, 2), uci.slice(2, 4)];
 }
 
-window.ForkSightBoard = { mountBoard, openGame };
+window.ForkSightBoard = {
+  mountBoard,
+  openGame,
+  currentId: () => (game && game.game ? game.game.game_id : null),
+};
 
 document.addEventListener("keydown", (e) => {
   if (!game) return;

@@ -187,10 +187,19 @@ async function refresh() {
 }
 
 function paintAnalyze(s) {
-  const eta = s.eta_s != null ? Math.round(s.eta_s / 60) + " min" : "—";
-  $("#analyze-status").innerHTML = `
-    <div>status ${s.status}  ·  ${s.done} done  ·  ${s.remaining} remaining  ·  ${(s.rate || 0).toFixed(2)} pos/s  ·  ETA ${eta}</div>
-  `;
+  const eng = s.engine || {};
+  const line = $("#engine-line");
+  if (line) {
+    line.textContent = eng.found ? `Stockfish: ${eng.path}` : "Stockfish is not installed. Download it once, then analyze.";
+  }
+  if (s.error) {
+    $("#analyze-status").textContent = s.error;
+  } else {
+    const eta = s.eta_s != null ? Math.round(s.eta_s / 60) + " min" : "—";
+    $("#analyze-status").innerHTML = `
+      <div>${s.status}  ·  ${s.done} positions done  ·  ${s.remaining} remaining  ·  ${(s.rate || 0).toFixed(2)} pos/s  ·  ETA ${eta}</div>
+    `;
+  }
   $("#analyze-log").innerHTML = (s.log || []).map((l) => `<li>${escapeHtml(l)}</li>`).join("");
 }
 
@@ -253,11 +262,56 @@ $("#analyze-form").onsubmit = async (e) => {
 $("#btn-pause").onclick = () => api.post("/api/analyze/pause").then(paintAnalyze);
 $("#btn-resume").onclick = () => api.post("/api/analyze/resume").then(paintAnalyze);
 $("#btn-stop").onclick = () => api.post("/api/analyze/stop-after").then(paintAnalyze);
-$("#btn-bench").onclick = async () => {
-  const fd = new FormData($("#analyze-form"));
-  const body = { mode: fd.get("mode"), depth: Number(fd.get("depth")), movetime_ms: Number(fd.get("movetime_ms")), multipv: 1 };
-  const r = await api.post("/api/analyze/benchmark", body);
-  $("#analyze-status").textContent = `benchmark ${r.positions} pos in ${r.seconds.toFixed(1)}s · ${r.rate.toFixed(2)} pos/s · ETA ${r.eta_s ? Math.round(r.eta_s / 60) + " min" : "—"}`;
+
+$("#btn-download-sf").onclick = async () => {
+  $("#engine-line").textContent = "Downloading Stockfish…";
+  try {
+    const info = await api.post("/api/analyze/download-stockfish", {});
+    $("#engine-line").textContent = info.found ? `Stockfish: ${info.path}` : info.error || "Download failed.";
+  } catch (err) {
+    $("#engine-line").textContent = String(err.message || err);
+  }
+};
+
+$("#btn-analyze-game").onclick = async () => {
+  const id = window.ForkSightBoard && window.ForkSightBoard.currentId();
+  const statusEl = $("#board-analyze-status");
+  if (!id) {
+    statusEl.textContent = "Open a game from the Games table first.";
+    return;
+  }
+  const eng = await api.get("/api/analyze/engine");
+  if (!eng.found) {
+    statusEl.textContent = "Stockfish isn’t installed yet — download it on the Analyze page, then come back.";
+    show("analyze");
+    return;
+  }
+  statusEl.textContent = "Analyzing this game…";
+  const s = await api.post("/api/analyze/start", {
+    mode: "depth",
+    depth: 15,
+    skip_book: true,
+    only_unanalyzed: false,
+    game_id: id,
+  });
+  if (s.error) {
+    statusEl.textContent = s.error;
+    return;
+  }
+  const tick = setInterval(async () => {
+    const st = await api.get("/api/analyze/status");
+    statusEl.textContent =
+      st.status === "running"
+        ? `Analyzing… ${st.done} positions`
+        : st.error || st.status;
+    if (st.status === "complete" || st.status === "failed" || st.status === "idle") {
+      clearInterval(tick);
+      if (st.status === "complete") {
+        await window.ForkSightBoard.openGame(id);
+        statusEl.textContent = "Done. Step through the moves — the eval graph and move classes are filled in.";
+      }
+    }
+  }, 1500);
 };
 
 $("#sql-run").onclick = async () => {

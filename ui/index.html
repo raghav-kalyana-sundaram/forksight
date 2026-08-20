@@ -68,25 +68,29 @@
     </section>
 
     <section id="page-analyze" class="page">
+      <p class="lede">Stockfish scores every move. Open a game and click <strong>Analyze this game</strong>, or run a batch below. Depth 15 is a few minutes per game on a laptop. Use AC power.</p>
+      <p id="engine-line" class="cue"></p>
+      <button type="button" id="btn-download-sf">Download Stockfish</button>
       <form id="analyze-form" class="settings">
-        <label>Mode
-          <select name="mode"><option value="depth">depth</option><option value="movetime">movetime</option></select>
-        </label>
-        <label>Depth <input name="depth" type="number" value="15" min="8" max="30"></label>
-        <label>Movetime ms <input name="movetime_ms" type="number" value="200"></label>
-        <label>MultiPV <input name="multipv" type="number" value="1" min="1" max="5"></label>
-        <label class="check"><input name="skip_book" type="checkbox" checked> Skip book</label>
-        <label class="check"><input name="only_unanalyzed" type="checkbox" checked> Only unanalyzed</label>
-        <label class="check"><input name="eco" type="checkbox"> Eco (half threads)</label>
+        <details>
+          <summary>Settings</summary>
+          <label>Mode
+            <select name="mode"><option value="depth">depth</option><option value="movetime">movetime</option></select>
+          </label>
+          <label>Depth <input name="depth" type="number" value="15" min="8" max="30"></label>
+          <label>Movetime ms <input name="movetime_ms" type="number" value="200"></label>
+          <label>MultiPV <input name="multipv" type="number" value="1" min="1" max="5"></label>
+          <label class="check"><input name="skip_book" type="checkbox" checked> Skip book</label>
+          <label class="check"><input name="only_unanalyzed" type="checkbox" checked> Only unanalyzed</label>
+          <label class="check"><input name="eco" type="checkbox"> Eco (half threads)</label>
+        </details>
         <div class="row">
-          <button type="submit">Start</button>
+          <button type="submit">Analyze unanalyzed games</button>
           <button type="button" id="btn-pause">Pause</button>
           <button type="button" id="btn-resume">Resume</button>
           <button type="button" id="btn-stop">Stop after this game</button>
-          <button type="button" id="btn-bench">Benchmark</button>
         </div>
       </form>
-      <p class="muted">Full-CPU workload, comparable to compiling. Use AC power. Eco mode halves the thread count.</p>
       <div id="analyze-status" class="status-block"></div>
       <ol id="analyze-log" class="log"></ol>
     </section>
@@ -99,6 +103,10 @@
         </div>
         <div class="board-side">
           <div id="board-facts"></div>
+          <div class="row">
+            <button type="button" id="btn-analyze-game">Analyze this game</button>
+          </div>
+          <p id="board-analyze-status" class="muted"></p>
           <ol id="movelist" class="movelist"></ol>
         </div>
       </div>

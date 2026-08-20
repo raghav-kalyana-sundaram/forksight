@@ -30,6 +30,7 @@ class JobSettings:
     skip_book: bool = True
     only_unanalyzed: bool = True
     eco: bool = False
+    game_id: str | None = None
 
 
 @dataclass
@@ -45,6 +46,7 @@ class JobState:
     log: list[str] = field(default_factory=list)
     error: str | None = None
     stop_after_game: bool = False
+    current_game: str | None = None
     pause_event: threading.Event = field(default_factory=threading.Event)
 
 
@@ -72,10 +74,23 @@ class Analyzer:
             "error": s.error,
             "stop_after_game": s.stop_after_game,
             "settings": s.settings.__dict__,
+            "engine": self.engine_info(),
+            "current_game": s.current_game,
         }
+
+    def engine_info(self) -> dict[str, Any]:
+        try:
+            path = self._engine_path()
+            return {"found": True, "path": path}
+        except FileNotFoundError as exc:
+            return {"found": False, "error": str(exc)}
 
     def start(self, settings: JobSettings) -> dict[str, Any]:
         if self.state.status == "running":
+            return self.snapshot()
+        info = self.engine_info()
+        if not info["found"]:
+            self.state = JobState(status="failed", settings=settings, error=info["error"])
             return self.snapshot()
         self.state = JobState(job_id=uuid.uuid4().hex[:8], status="running", settings=settings)
         self.state.pause_event.set()
@@ -107,14 +122,14 @@ class Analyzer:
             return path
         from app.paths import STOCKFISH_DIR
 
-        for name in os.listdir(STOCKFISH_DIR) if STOCKFISH_DIR.exists() else []:
-            cand = STOCKFISH_DIR / name
-            if cand.is_file() and os.access(cand, os.X_OK):
-                return str(cand)
+        if STOCKFISH_DIR.exists():
+            for cand in STOCKFISH_DIR.rglob("*"):
+                if cand.is_file() and cand.name.lower().startswith("stockfish") and os.access(cand, os.X_OK):
+                    return str(cand)
         which = _which("stockfish")
         if which:
             return which
-        raise FileNotFoundError("Stockfish binary not found. Set stockfish_path or run tools/download_stockfish.py")
+        raise FileNotFoundError("Stockfish is not installed. Use Download Stockfish on the Analyze page.")
 
     def _open_engine(self, settings: JobSettings) -> EngineId:
         path = self._engine_path()
@@ -185,6 +200,9 @@ class Analyzer:
         }
 
     def _count_remaining(self, settings: JobSettings, engine_id: EngineId) -> int:
+        if settings.game_id:
+            row = self.store.fetchone("SELECT COUNT(*) FROM moves WHERE game_id = ?", (settings.game_id,))
+            return int(row[0] or 0)
         if settings.only_unanalyzed:
             row = self.store.fetchone(
                 """
@@ -207,15 +225,19 @@ class Analyzer:
             self._open_tb()
             remaining = self._count_remaining(settings, engine_id)
             self.state.remaining = remaining
-            games = self.store.fetchall(
-                """
-                SELECT game_id FROM games
-                WHERE (? = 0) OR analysis_status <> 'complete' OR analysis_depth IS NULL OR analysis_depth < ?
-                ORDER BY utc_date
-                """,
-                (1 if settings.only_unanalyzed else 0, settings.depth),
-            )
+            if settings.game_id:
+                games = [(settings.game_id,)]
+            else:
+                games = self.store.fetchall(
+                    """
+                    SELECT game_id FROM games
+                    WHERE (? = 0) OR analysis_status <> 'complete' OR analysis_depth IS NULL OR analysis_depth < ?
+                    ORDER BY utc_date
+                    """,
+                    (1 if settings.only_unanalyzed else 0, settings.depth),
+                )
             for (game_id,) in games:
+                self.state.current_game = game_id
                 self.state.pause_event.wait()
                 if self.state.status not in ("running", "paused"):
                     break
