@@ -201,6 +201,13 @@ function paintAnalyze(s) {
     `;
   }
   $("#analyze-log").innerHTML = (s.log || []).map((l) => `<li>${escapeHtml(l)}</li>`).join("");
+  const running = s.status === "running";
+  const paused = s.status === "paused";
+  $("#btn-pause").classList.toggle("hidden", !running);
+  $("#btn-resume").classList.toggle("hidden", !paused);
+  $("#btn-stop").classList.toggle("hidden", !running);
+  const dl = $("#btn-download-sf");
+  if (dl) dl.classList.toggle("hidden", !!eng.found);
 }
 
 async function paintFooter() {
