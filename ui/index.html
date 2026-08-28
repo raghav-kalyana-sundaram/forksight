@@ -22,31 +22,53 @@
         <button data-page="sql">SQL</button>
       </nav>
     </div>
-    <form id="query-form" class="query-bar" autocomplete="off">
+    <form id="query-form" class="query-bar page-chrome" autocomplete="off">
       <label for="q">Query</label>
-      <input id="q" name="q" spellcheck="false" placeholder="castled:long   material:KRPvKP   or use the filters">
-      <button type="submit">Run</button>
+      <input id="q" name="q" spellcheck="false" placeholder="result:loss opening:French  — tokens, not pills">
+      <button type="submit">Filter</button>
     </form>
-    <div id="filters" class="filters"></div>
+    <div id="filters" class="filters page-chrome"></div>
     <p id="grain" class="grain"></p>
     <p id="cue" class="cue"></p>
   </header>
 
   <main>
     <section id="page-games" class="page on">
-      <div class="toolbar">
-        <label class="file">
-          Import PGN
-          <input id="pgn-files" type="file" accept=".pgn,.zip" multiple>
-        </label>
-        <span id="import-report" class="muted"></span>
+      <div id="drop-zone" class="drop-zone">
+        <div class="toolbar">
+          <label class="file">
+            Import PGN
+            <input id="pgn-files" type="file" accept=".pgn,.zip" multiple>
+          </label>
+          <form id="lichess-form" class="lichess-form">
+            <label class="sr">Lichess username</label>
+            <input id="lichess-user" name="username" placeholder="Lichess username" autocomplete="username">
+            <label class="sr">How many games</label>
+            <input id="lichess-max" type="number" value="200" min="10" max="500" title="Max games">
+            <button type="submit">Pull from Lichess</button>
+          </form>
+          <span id="import-report" class="muted"></span>
+        </div>
+        <p class="drop-hint muted">Or drop a PGN / zip here.</p>
       </div>
-      <p class="hint">Click a row to step through the game. Insights groups this list. Analyze fills the accuracy column.</p>
+      <div id="review-root"></div>
+      <p class="hint">Results are yours (win / draw / loss), not the PGN 1-0. Accuracy is the Lichess formula, only after Analyze finishes. Click a row to replay.</p>
+      <div id="games-empty" class="empty hidden">
+        <p>No games in this filter. Pull from Lichess or import a PGN to start.</p>
+      </div>
       <table class="dense" id="games-table">
         <thead>
           <tr>
-            <th>Date</th><th>Color</th><th>Opponent</th><th>Rating</th>
-            <th>TC</th><th>ECO</th><th>Opening</th><th>Result</th><th>Acc</th>
+            <th data-sort="date">Date</th>
+            <th data-sort="color">Color</th>
+            <th data-sort="opponent">Opponent</th>
+            <th data-sort="you_elo">Your elo</th>
+            <th data-sort="opp_elo">Opp elo</th>
+            <th data-sort="rating_diff">Δ</th>
+            <th data-sort="tc_class">Time</th>
+            <th data-sort="opening">Opening</th>
+            <th data-sort="user_result">Result</th>
+            <th data-sort="accuracy">Acc</th>
           </tr>
         </thead>
         <tbody></tbody>
@@ -54,6 +76,7 @@
     </section>
 
     <section id="page-insights" class="page">
+      <p class="hint">Accuracy uses the Lichess formula on your moves, only in finished analyses. A row with n under 5 is a count, not a rate — we hide the percentage.</p>
       <div id="insights-root"></div>
       <details class="sql-preview">
         <summary>Generated SQL</summary>
@@ -62,13 +85,13 @@
     </section>
 
     <section id="page-improve" class="page">
-      <p class="lede">Two lists. Versus peers needs a population cube. Versus myself is always available. Ranking uses the conservative bound of the gap after shrinkage. Grey rows have an interval that crosses zero.</p>
-      <label>Nmin <input id="nmin" type="number" value="30" min="1" class="num"></label>
+      <div id="improve-gate"></div>
+      <label class="nmin-label">Need at least <input id="nmin" type="number" value="30" min="5" class="num"> analyzed games</label>
       <div id="improve-root"></div>
     </section>
 
     <section id="page-analyze" class="page">
-      <p class="lede">Stockfish scores every move. Open a game and click <strong>Analyze this game</strong>, or run a batch below. Depth 15 is a few minutes per game on a laptop. Use AC power.</p>
+      <p class="lede">Stockfish scores every move with the Lichess accuracy formula. Depth 15 is a laptop compromise — it will miss some blitz tactics, which is why we do not pretend the tenth of a percent is exact. Use AC power.</p>
       <p id="engine-line" class="cue"></p>
       <button type="button" id="btn-download-sf">Download Stockfish</button>
       <form id="analyze-form" class="settings">
@@ -96,10 +119,22 @@
     </section>
 
     <section id="page-board" class="page">
-      <div class="board-layout">
+      <div id="board-empty" class="empty">Open a game from the list — or a turning point from tonight’s losses.</div>
+      <div class="board-layout hidden" id="board-wrap">
         <div>
           <div id="board" class="cg-wrap"></div>
-          <canvas id="eval-graph" width="512" height="88"></canvas>
+          <canvas id="eval-graph" width="512" height="104"></canvas>
+          <div class="board-nav">
+            <button type="button" id="btn-start" title="Start">«</button>
+            <button type="button" id="btn-prev" title="Back">‹</button>
+            <button type="button" id="btn-next" title="Forward">›</button>
+            <button type="button" id="btn-end" title="End">»</button>
+            <button type="button" id="btn-flip">Flip</button>
+            <button type="button" id="btn-fen">Copy FEN</button>
+            <button type="button" id="btn-pgn">Copy PGN</button>
+            <a id="btn-lichess" class="hidden" target="_blank" rel="noreferrer">Open on Lichess</a>
+            <span class="muted keys">← →</span>
+          </div>
         </div>
         <div class="board-side">
           <div id="board-facts"></div>
@@ -107,35 +142,42 @@
             <button type="button" id="btn-analyze-game">Analyze this game</button>
           </div>
           <p id="board-analyze-status" class="muted"></p>
+          <div id="turning-inline"></div>
           <ol id="movelist" class="movelist"></ol>
         </div>
       </div>
     </section>
 
     <section id="page-sql" class="page">
-      <p class="lede">Read-only. <code>v_games</code>, <code>v_moves</code>, <code>v_spans</code>. SELECT or WITH only.</p>
-      <textarea id="sql-text" rows="6">SELECT tc_class, COUNT(*) n FROM v_games GROUP BY 1 ORDER BY n DESC</textarea>
-      <button type="button" id="sql-run">Run</button>
+      <p class="lede">Read-only DuckDB on this machine. <code>v_games</code>, <code>v_moves</code>, <code>v_spans</code>. SELECT or WITH only.</p>
+      <div id="sql-schema" class="schema"></div>
+      <div id="sql-examples" class="sql-examples"></div>
+      <textarea id="sql-text" rows="8" spellcheck="false">SELECT tc_class, COUNT(*) AS n FROM v_games GROUP BY 1 ORDER BY n DESC</textarea>
+      <div class="row">
+        <button type="button" id="sql-run">Run query</button>
+        <button type="button" id="sql-csv" class="ghost hidden">Copy CSV</button>
+      </div>
       <div id="sql-out"></div>
     </section>
   </main>
 
   <footer>
-    <span id="foot-db"></span>
+    <span id="foot-games"></span>
     <span id="foot-import"></span>
     <label>Report depth
       <select id="report-depth"></select>
     </label>
-    <button type="button" id="btn-settings">Aliases</button>
+    <button type="button" id="btn-theme" title="Toggle dark mode">Dark</button>
+    <button type="button" id="btn-settings">Your name</button>
   </footer>
 
   <dialog id="settings-dialog">
     <form id="settings-form" method="dialog">
       <h2>Settings</h2>
-      <label>Aliases — your Lichess username as it appears in the PGN
+      <label>Your name as it appears in the PGN (Lichess username)
         <input name="aliases" placeholder="lichess-username">
       </label>
-      <label class="check"><input name="include_observed" type="checkbox"> Include observed games</label>
+      <label class="check"><input name="include_observed" type="checkbox"> Include games that are not yours</label>
       <label>Stockfish path <input name="stockfish_path"></label>
       <label>Syzygy path <input name="syzygy_path"></label>
       <menu>

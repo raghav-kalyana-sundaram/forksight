@@ -8,6 +8,8 @@ from pydantic import BaseModel
 
 from app import ingest, stats
 from app.engine import Analyzer, JobSettings
+from app.labels import user_result
+from app.lichess import fetch_user_pgn
 from app.store import Store
 
 REQUEST_HEADER = "x-forksight-request"
@@ -65,6 +67,11 @@ class SqlIn(BaseModel):
     sql: str
 
 
+class LichessIn(BaseModel):
+    username: str
+    max_games: int = 200
+
+
 class ExplorerIn(BaseModel):
     uci_prefix: list[str] = []
 
@@ -97,6 +104,34 @@ async def import_pgn(
         blobs.append((f.filename or "upload.pgn", await f.read()))
     report = ingest.ingest_files(store(), blobs)
     return report.__dict__
+
+
+@router.post("/import/lichess")
+def import_lichess(body: LichessIn, x_forksight_request: str | None = Header(default=None)) -> dict[str, Any]:
+    require_header(x_forksight_request)
+    pgn = fetch_user_pgn(body.username, body.max_games)
+    settings = store().settings_json()
+    aliases = list(settings.get("aliases") or [])
+    if body.username not in aliases:
+        aliases.append(body.username)
+        store().save_settings({"aliases": aliases})
+    report = ingest.ingest_files(store(), [(f"{body.username}.pgn", pgn)], aliases=aliases)
+    return report.__dict__
+
+
+@router.get("/review")
+def review(q: str = "", limit: int = 8) -> dict[str, Any]:
+    return stats.review(store(), q, limit=limit)
+
+
+@router.get("/sql/schema")
+def sql_schema() -> dict[str, Any]:
+    s = store()
+    views = {}
+    for name in ("v_games", "v_moves", "v_spans"):
+        cols = s.fetchall(f"DESCRIBE {name}")
+        views[name] = [{"name": c[0], "type": c[1]} for c in cols]
+    return {"views": views}
 
 
 @router.post("/recompute")
@@ -152,6 +187,9 @@ def game(game_id: str) -> dict[str, Any]:
         (game_id,),
     )
     start = s.fetchone("SELECT eval_cp, winpct FROM evaluations WHERE game_id = ? AND ply = 0", (game_id,))
+    pgn_row = s.fetchone("SELECT pgn FROM games WHERE game_id = ?", (game_id,))
+    game_d["user_result"] = user_result(game_d.get("you_color"), game_d.get("result"))
+    game_d["pgn"] = pgn_row[0] if pgn_row else ""
     return {
         "game": game_d,
         "start_eval": {"eval_cp": start[0], "winpct": start[1]} if start else None,

@@ -68,7 +68,7 @@ def _harmonic_mean(xs: list[float]) -> float | None:
     if not xs or any(x <= 0 for x in xs):
         positive = [x for x in xs if x > 0]
         if not positive:
-            return 0.0 if xs else None
+            return None
         xs = [max(x, 1e-9) for x in xs]
     return len(xs) / sum(1.0 / x for x in xs)
 

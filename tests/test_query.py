@@ -8,7 +8,7 @@ def test_parser_every_token():
         'tc:blitz color:white eco:B90 opening:Sicilian material:KRPvKP '
         'material_wb:KRPvKP pieces:me=R+P,opp=N,no=Q castled:long phase:endgame '
         'entry:winning analyzed:yes result:win rating:1600-1800 opprating:1800-2000 '
-        'opponent:hikaru year:2025 leftover'
+        'opponent:hikaru year:2025 since:2025-01-01 until:2025-12-31 leftover'
     )
     assert q.tokens["tc"] == "blitz"
     assert q.tokens["color"] == "white"
@@ -26,6 +26,8 @@ def test_parser_every_token():
     assert q.tokens["opprating"] == "1800-2000"
     assert q.tokens["opponent"] == "hikaru"
     assert q.tokens["year"] == "2025"
+    assert q.tokens["since"] == "2025-01-01"
+    assert q.tokens["until"] == "2025-12-31"
     assert "leftover" in q.bare
 
 

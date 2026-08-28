@@ -315,9 +315,12 @@ class Store:
     def footer(self) -> dict[str, Any]:
         last = self.fetchone("SELECT MAX(imported_at) FROM games")
         n = self.fetchone("SELECT COUNT(*) FROM games")
+        last_import = None
+        if last and last[0]:
+            last_import = str(last[0])[:16].replace("T", " ")
         return {
-            "db_path": str(self.path),
-            "last_import": str(last[0]) if last and last[0] else None,
+            "db_path": "local",
+            "last_import": last_import,
             "report_depth": self.report_depth(),
             "game_count": int(n[0] or 0),
             "depth_options": self.depth_options(),

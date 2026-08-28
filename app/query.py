@@ -17,7 +17,12 @@ GAME_TOKENS = {
     "opprating",
     "opponent",
     "year",
+    "since",
+    "until",
     "castled",
+    "length",
+    "ratediff",
+    "tod",
 }
 PLY_TOKENS = {"material", "material_wb", "pieces", "phase", "entry"}
 
@@ -155,8 +160,56 @@ def compile_query(
         params.extend([like, like, like, like])
 
     if year := q.tokens.get("year"):
-        wheres.append("CAST(substr(g.utc_date, 1, 4) AS INTEGER) = ?")
+        wheres.append("CAST(substr(replace(g.utc_date, '.', '-'), 1, 4) AS INTEGER) = ?")
         params.append(int(year))
+
+    if since := q.tokens.get("since"):
+        wheres.append("replace(COALESCE(g.utc_date, ''), '.', '-') >= ?")
+        params.append(since.replace(".", "-")[:10])
+
+    if until := q.tokens.get("until"):
+        wheres.append("replace(COALESCE(g.utc_date, ''), '.', '-') <= ?")
+        params.append(until.replace(".", "-")[:10])
+
+    if length := q.tokens.get("length"):
+        band = length.lower()
+        if band in ("short", "<20"):
+            wheres.append("g.ply_count IS NOT NULL AND (g.ply_count + 1) / 2 < 20")
+        elif band in ("medium", "20-39"):
+            wheres.append("g.ply_count IS NOT NULL AND (g.ply_count + 1) / 2 BETWEEN 20 AND 39")
+        elif band in ("long", "40+"):
+            wheres.append("g.ply_count IS NOT NULL AND (g.ply_count + 1) / 2 >= 40")
+
+    if rd := q.tokens.get("ratediff"):
+        diff_sql = """
+            CASE
+              WHEN g.you_color = 'white' THEN g.white_elo - g.black_elo
+              WHEN g.you_color = 'black' THEN g.black_elo - g.white_elo
+            END
+        """
+        key = rd.lower().replace(" ", "")
+        if key in ("down200", "down200+", "-200"):
+            wheres.append(f"({diff_sql}) <= -200")
+        elif key in ("down", "down80"):
+            wheres.append(f"({diff_sql}) <= -80 AND ({diff_sql}) > -200")
+        elif key in ("even", "0"):
+            wheres.append(f"({diff_sql}) > -80 AND ({diff_sql}) < 80")
+        elif key in ("up", "up80"):
+            wheres.append(f"({diff_sql}) >= 80 AND ({diff_sql}) < 200")
+        elif key in ("up200", "up200+", "+200"):
+            wheres.append(f"({diff_sql}) >= 200")
+
+    if tod := q.tokens.get("tod"):
+        hour_sql = "TRY_CAST(split_part(COALESCE(g.utc_time, ''), ':', 1) AS INTEGER)"
+        key = tod.lower()
+        if key == "night":
+            wheres.append(f"({hour_sql}) < 6")
+        elif key == "morning":
+            wheres.append(f"({hour_sql}) >= 6 AND ({hour_sql}) < 12")
+        elif key == "afternoon":
+            wheres.append(f"({hour_sql}) >= 12 AND ({hour_sql}) < 18")
+        elif key == "evening":
+            wheres.append(f"({hour_sql}) >= 18")
 
     if rating := q.tokens.get("rating"):
         lo, hi = _range(rating)
