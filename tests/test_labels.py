@@ -1,4 +1,4 @@
-from app.labels import eco_family_name, material_imbalance, score_display, user_result
+from app.labels import eco_family_name, format_pgn_date, material_imbalance, score_display, term_label, user_result
 
 
 def test_starting_and_equal():
@@ -35,3 +35,10 @@ def test_score_hidden_on_tiny_n():
     assert score_display(1.0, 1) is None
     assert score_display(0.5, 4) is None
     assert score_display(0.5, 12) == "50%"
+
+
+def test_term_and_date_labels():
+    assert term_label("flag") == "Time forfeit"
+    assert term_label("mate") == "Checkmate"
+    assert format_pgn_date("2017.07.23") == "23 Jul 2017"
+    assert format_pgn_date("2016.11.05") == "5 Nov 2016"

@@ -1,4 +1,14 @@
-const state = { page: "games", q: "", sort: { key: "date", dir: -1 }, lastSql: null };
+const state = {
+  page: "games",
+  q: "",
+  sort: { key: "date", dir: -1 },
+  lastSql: null,
+  offset: 0,
+  limit: 50,
+  total: 0,
+  years: [],
+  treePrefix: [],
+};
 
 const CHROME_PAGES = new Set(["games", "insights", "improve"]);
 
@@ -7,12 +17,11 @@ function $(sel) {
 }
 
 const TC_CHIPS = [
-  { label: "Blitz + rapid", q: "" },
+  { label: "All", q: "" },
   { label: "Blitz", q: "tc:blitz" },
   { label: "Rapid", q: "tc:rapid" },
   { label: "Bullet", q: "tc:bullet" },
   { label: "Classical", q: "tc:classical" },
-  { label: "All", q: "tc:all" },
 ];
 const COLOR_CHIPS = [
   { label: "Either", key: "color", value: "" },
@@ -24,6 +33,14 @@ const RESULT_CHIPS = [
   { label: "Wins", value: "win" },
   { label: "Draws", value: "draw" },
   { label: "Losses", value: "loss" },
+];
+const TERM_CHIPS = [
+  { label: "Any end", value: "" },
+  { label: "Mate", value: "mate" },
+  { label: "Flag", value: "flag" },
+  { label: "Resign", value: "resign" },
+  { label: "Abandon", value: "abandon" },
+  { label: "Normal", value: "normal" },
 ];
 
 function todayISO() {
@@ -41,45 +58,42 @@ function daysAgo(n) {
 
 function dateChips() {
   const y = new Date().getFullYear();
+  const years = (state.years || []).slice(0, 8);
   return [
-    { label: "Any date", since: "", until: "" },
-    { label: "Last 7 days", since: daysAgo(7), until: todayISO() },
-    { label: "Last 30 days", since: daysAgo(30), until: todayISO() },
-    { label: `This year`, since: `${y}-01-01`, until: todayISO() },
+    { label: "Any date", year: "", since: "", until: "" },
+    ...years.map((yr) => ({ label: String(yr), year: String(yr), since: "", until: "" })),
+    { label: "Last 7 days", year: "", since: daysAgo(7), until: todayISO() },
+    { label: "Last 30 days", year: "", since: daysAgo(30), until: todayISO() },
+    { label: `This year (${y})`, year: "", since: `${y}-01-01`, until: todayISO() },
   ];
 }
 
-function tokenMap(q) {
-  const map = {};
-  String(q || "")
-    .trim()
-    .split(/\s+/)
-    .forEach((part) => {
-      const i = part.indexOf(":");
-      if (i > 0) map[part.slice(0, i)] = part.slice(i + 1);
-    });
-  return map;
-}
-
-function setTokens(patch) {
+function setTokens(patch, { resetPage = true } = {}) {
   const map = tokenMap(state.q);
   Object.entries(patch).forEach(([k, v]) => {
     if (!v) delete map[k];
     else map[k] = v;
   });
-  state.q = Object.entries(map)
-    .map(([k, v]) => `${k}:${v}`)
-    .join(" ");
+  state.q = formatTokens(map);
   $("#q").value = state.q;
+  if (resetPage) state.offset = 0;
   refresh();
+}
+
+function mergeQuery(extra) {
+  const next = { ...tokenMap(state.q), ...tokenMap(extra) };
+  state.q = formatTokens(next);
+  $("#q").value = state.q;
+  state.offset = 0;
+  show("games");
 }
 
 function renderFilters() {
   const map = tokenMap(state.q);
-  const tcActive = map.tc == null ? "" : map.tc === "all" ? "tc:all" : "tc:" + map.tc;
+  const tcActive = map.tc == null || map.tc === "all" ? "" : "tc:" + map.tc;
   const tc = TC_CHIPS.map(
     (c) =>
-      `<button type="button" data-setq="${escapeAttr(c.q)}" class="${c.q === tcActive || (c.q === "" && !map.tc) ? "on" : ""}">${c.label}</button>`
+      `<button type="button" data-setq="${escapeAttr(c.q)}" class="${c.q === tcActive ? "on" : ""}">${c.label}</button>`
   ).join("");
   const color = COLOR_CHIPS.map(
     (c) =>
@@ -89,21 +103,28 @@ function renderFilters() {
     (c) =>
       `<button type="button" data-result="${escapeAttr(c.value)}" class="${(map.result || "") === c.value ? "on" : ""}">${c.label}</button>`
   ).join("");
-  const since = map.since || "";
+  const term = TERM_CHIPS.map(
+    (c) =>
+      `<button type="button" data-term="${escapeAttr(c.value)}" class="${(map.term || "") === c.value ? "on" : ""}">${c.label}</button>`
+  ).join("");
   const dates = dateChips()
-    .map((c) => `<button type="button" data-since="${escapeAttr(c.since)}" data-until="${escapeAttr(c.until)}" class="${since === c.since ? "on" : ""}">${c.label}</button>`)
+    .map((c) => {
+      const on = c.year ? map.year === c.year : !map.year && (map.since || "") === c.since;
+      return `<button type="button" data-year="${escapeAttr(c.year)}" data-since="${escapeAttr(c.since)}" data-until="${escapeAttr(c.until)}" class="${on ? "on" : ""}">${c.label}</button>`;
+    })
     .join("");
   $("#filters").innerHTML = `
     <span class="group" role="radiogroup" aria-label="Time control">${chipLabel("Time")}${tc}</span>
     <span class="group" role="radiogroup" aria-label="Color">${chipLabel("Color")}${color}</span>
     <span class="group" role="radiogroup" aria-label="Result">${chipLabel("Result")}${result}</span>
+    <span class="group" role="radiogroup" aria-label="How it ended">${chipLabel("Ended")}${term}</span>
     <span class="group" role="radiogroup" aria-label="Date">${chipLabel("When")}${dates}</span>
+    <span class="group opp-wrap">${chipLabel("Opponent")}<input id="opp-search" type="search" placeholder="name" value="${escapeAttr(map.opponent || "")}"></span>
   `;
   $("#filters").querySelectorAll("[data-setq]").forEach((b) => {
     b.onclick = () => {
       const next = b.dataset.setq;
       if (next === "") setTokens({ tc: "" });
-      else if (next === "tc:all") setTokens({ tc: "all" });
       else setTokens({ tc: next.slice(3) });
     };
   });
@@ -113,13 +134,47 @@ function renderFilters() {
   $("#filters").querySelectorAll("[data-result]").forEach((b) => {
     b.onclick = () => setTokens({ result: b.dataset.result });
   });
-  $("#filters").querySelectorAll("[data-since]").forEach((b) => {
-    b.onclick = () => setTokens({ since: b.dataset.since, until: b.dataset.until });
+  $("#filters").querySelectorAll("[data-term]").forEach((b) => {
+    b.onclick = () => setTokens({ term: b.dataset.term });
   });
+  $("#filters").querySelectorAll("[data-since]").forEach((b) => {
+    b.onclick = () => setTokens({ year: b.dataset.year, since: b.dataset.since, until: b.dataset.until });
+  });
+  const opp = $("#opp-search");
+  if (opp) {
+    opp.onkeydown = (e) => {
+      if (e.key === "Enter") {
+        e.preventDefault();
+        setTokens({ opponent: opp.value.trim() });
+      }
+    };
+    opp.onchange = () => setTokens({ opponent: opp.value.trim() });
+  }
 }
 
 function chipLabel(t) {
   return `<span class="glabel">${t}</span>`;
+}
+
+function paintWdl(data) {
+  const el = $("#wdl");
+  if (!data || data.games == null) {
+    el.classList.add("hidden");
+    return;
+  }
+  el.classList.remove("hidden");
+  const perf = data.performance;
+  const perfCls = perf == null ? "" : perf >= 0 ? "plus" : "minus";
+  const perfTxt = perf == null ? "—" : (perf >= 0 ? "+" : "") + (perf * 100).toFixed(1) + " vs exp";
+  el.innerHTML = `
+    <span class="stat">${data.games} games</span>
+    <span class="stat win"><b>${data.wins ?? 0}</b> W</span>
+    <span class="stat draw"><b>${data.draws ?? 0}</b> D</span>
+    <span class="stat loss"><b>${data.losses ?? 0}</b> L</span>
+    <span class="stat">Score <b>${pct(data.score)}</b></span>
+    <span class="stat">Expected <b>${pct(data.expected)}</b></span>
+    <span class="stat ${perfCls}"><b>${perfTxt}</b></span>
+  `;
 }
 
 function paintCue(meta, importExtra) {
@@ -166,13 +221,7 @@ function show(page) {
 function bindQueryRows(root) {
   root.querySelectorAll("tr[data-query]").forEach((tr) => {
     if (!tr.dataset.query) return;
-    tr.onclick = () => {
-      const extra = tr.dataset.query;
-      const merged = [state.q, extra].filter(Boolean).join(" ");
-      $("#q").value = merged;
-      state.q = merged;
-      show("games");
-    };
+    tr.onclick = () => mergeQuery(tr.dataset.query);
   });
 }
 
@@ -195,13 +244,72 @@ function sortRows(rows) {
   return copy;
 }
 
+function paintSortHeads() {
+  document.querySelectorAll("#games-table thead [data-sort]").forEach((th) => {
+    const on = th.dataset.sort === state.sort.key;
+    th.classList.toggle("sort-on", on);
+    let dir = th.querySelector(".dir");
+    if (!dir) {
+      dir = document.createElement("span");
+      dir.className = "dir";
+      th.appendChild(dir);
+    }
+    dir.textContent = on ? (state.sort.dir === 1 ? "▲" : "▼") : "";
+  });
+}
+
+function paintPager() {
+  const total = state.total;
+  const from = total ? state.offset + 1 : 0;
+  const to = Math.min(state.offset + state.limit, total);
+  const html =
+    total > state.limit
+      ? `<button type="button" id="pg-prev" ${state.offset <= 0 ? "disabled" : ""}>Prev</button>
+         <span>${from}–${to} of ${total}</span>
+         <button type="button" id="pg-next" ${state.offset + state.limit >= total ? "disabled" : ""}>Next</button>`
+      : total
+        ? `<span>${total} game${total === 1 ? "" : "s"}</span>`
+        : "";
+  ["#pager", "#pager-bottom"].forEach((sel) => {
+    const el = $(sel);
+    if (!el) return;
+    el.innerHTML = html;
+    el.classList.toggle("hidden", !html);
+    const prev = el.querySelector("#pg-prev");
+    const next = el.querySelector("#pg-next");
+    if (prev)
+      prev.onclick = () => {
+        state.offset = Math.max(0, state.offset - state.limit);
+        refresh();
+      };
+    if (next)
+      next.onclick = () => {
+        state.offset += state.limit;
+        refresh();
+      };
+  });
+}
+
+function evalBadge(src) {
+  if (src === "lichess-pgn") return `<span class="badge pgn">Lichess</span>`;
+  if (src) return `<span class="badge engine">Stockfish</span>`;
+  return "";
+}
+
 function paintGames(data) {
   $("#grain").textContent = grainLine(data);
+  paintWdl(data);
+  state.total = data.total ?? data.games ?? data.rows.length;
   const empty = $("#games-empty");
   const table = $("#games-table");
   if (!data.rows.length) {
     empty.classList.remove("hidden");
     table.classList.add("hidden");
+    const hiddenHint =
+      data.games === 0 && (state.years || []).length
+        ? `<p>No games in this filter. Year chips follow the corpus — “this year” is empty if you last played in ${(state.years || [])[0]}.</p>`
+        : `<p>No games in this filter. Pull from Lichess or import a PGN to start.</p>`;
+    empty.innerHTML = hiddenHint;
   } else {
     empty.classList.add("hidden");
     table.classList.remove("hidden");
@@ -214,6 +322,7 @@ function paintGames(data) {
       const accCell =
         r.accuracy != null ? acc(r.accuracy) : r.analysis_status === "complete" ? "—" : "<span class='muted'>…</span>";
       const diff = r.rating_diff == null ? "" : (r.rating_diff > 0 ? "+" : "") + r.rating_diff;
+      const exp = r.expected == null ? "" : (r.expected * 100).toFixed(0) + "%";
       return `<tr data-id="${r.game_id}">
         <td class="num">${escapeHtml(r.date_label || r.date || "")}</td>
         <td>${r.color === "white" ? "White" : r.color === "black" ? "Black" : "—"}</td>
@@ -221,9 +330,11 @@ function paintGames(data) {
         <td class="num">${r.you_elo ?? ""}</td>
         <td class="num">${r.opp_elo ?? ""}</td>
         <td class="num">${diff}</td>
+        <td class="num">${exp}</td>
         <td>${r.tc_class || ""}</td>
         <td>${escapeHtml(r.opening || "")}</td>
         <td class="result ${ur || ""}">${resultLabel(ur)}</td>
+        <td>${escapeHtml(r.termination_label || r.termination || "")} ${evalBadge(r.eval_source)}</td>
         <td class="num" title="Lichess accuracy, finished analyses only">${accCell}</td>
       </tr>`;
     })
@@ -234,6 +345,8 @@ function paintGames(data) {
       show("board");
     };
   });
+  paintSortHeads();
+  paintPager();
 }
 
 function paintReview(data) {
@@ -245,7 +358,7 @@ function paintReview(data) {
   }
   const need = data.unanalyzed
     ? `<div class="banner">
-        <p>${data.unanalyzed} game${data.unanalyzed === 1 ? "" : "s"} in this filter still need analysis. Accuracy, turning points, and Improve stay empty until Stockfish runs.</p>
+        <p>${data.unanalyzed} game${data.unanalyzed === 1 ? "" : "s"} in this filter still need analysis. Accuracy, turning points, and Improve stay empty until Stockfish runs — unless the PGN already has Lichess evals.</p>
         <button type="button" id="review-analyze">Analyze them</button>
       </div>`
     : "";
@@ -266,7 +379,7 @@ function paintReview(data) {
           <button type="button" class="open-game" data-id="${g.game_id}">
             ${escapeHtml(g.date_label || "")} · ${escapeHtml(g.opponent || "opponent")}${g.opp_elo ? " " + g.opp_elo : ""}
           </button>
-          <span class="muted">${escapeHtml(g.opening || "")} · ${g.tc_class || ""}</span>
+          <span class="muted">${escapeHtml(g.opening || "")} · ${g.tc_class || ""} · ${escapeHtml(g.termination_label || "")}</span>
         </header>
         <div class="turns">${points}</div>
       </article>`;
@@ -275,7 +388,7 @@ function paintReview(data) {
   root.innerHTML =
     need +
     (losses.length
-      ? `<section class="review"><h3>Tonight’s losses</h3><p class="muted">The three moves that cost the most win probability. Click one to stand on that square.</p>${cards}</section>`
+      ? `<section class="review"><h3>Recent losses</h3><p class="muted">The three moves that cost the most win probability. Click one to stand on that square.</p>${cards}</section>`
       : "");
   const goAnalyze = $("#review-analyze");
   if (goAnalyze) goAnalyze.onclick = () => show("analyze");
@@ -289,11 +402,14 @@ function paintReview(data) {
 
 function paintInsights(data) {
   $("#grain").textContent = grainLine(data);
+  paintWdl(data);
   $("#insights-sql").textContent = data.sql || "";
   const g = data.groups;
   $("#insights-root").innerHTML =
+    groupTable("Year", g.year, { nLabel: "games" }) +
     groupTable("Color", g.color, { nLabel: "games" }) +
     groupTable("Time control", g.time_class, { nLabel: "games" }) +
+    groupTable("How it ended", g.termination, { nLabel: "games" }) +
     `<section class="block"><h3>Rating differential</h3>${barChart(g.rating_diff || [])}</section>` +
     groupTable("Time of day (UTC)", g.time_of_day, { nLabel: "games" }) +
     groupTable("Game length", g.game_length, { nLabel: "games" }) +
@@ -301,6 +417,7 @@ function paintInsights(data) {
     groupTable("When you were winning or losing", g.conversion, { nLabel: "games" }) +
     groupTable("Time trouble", g.time_trouble, { nLabel: "your moves" }) +
     groupTable("Opening", g.opening, { nLabel: "games" }) +
+    groupTable("Opponents", g.opponent, { nLabel: "games" }) +
     groupTable("Your castle", g.your_castle, { nLabel: "games" }) +
     groupTable("Both kings", g.kings, { nLabel: "games" }) +
     phaseBlock(g.phase || []) +
@@ -308,16 +425,49 @@ function paintInsights(data) {
   bindQueryRows($("#insights-root"));
 }
 
+async function paintOpeningTree() {
+  const root = $("#opening-tree");
+  if (!root) return;
+  try {
+    const data = await api.post("/api/explorer", { uci_prefix: state.treePrefix });
+    const path = state.treePrefix.length ? state.treePrefix.join(" ") : "starting position";
+    const back = state.treePrefix.length ? `<button type="button" id="tree-back">Back</button>` : "";
+    const moves = (data.moves || [])
+      .slice(0, 16)
+      .map(
+        (m) =>
+          `<button type="button" data-uci="${escapeAttr(m.uci)}">${escapeHtml(m.san)} · ${m.n} · ${wdl(m)} · ${scoreCell(m)}</button>`
+      )
+      .join("");
+    root.innerHTML = `<p class="tree-path">${escapeHtml(path)} ${back}</p><div class="tree-moves">${moves || "<span class='muted'>No moves from this position in your games.</span>"}</div>`;
+    const backBtn = $("#tree-back");
+    if (backBtn)
+      backBtn.onclick = () => {
+        state.treePrefix = state.treePrefix.slice(0, -1);
+        paintOpeningTree();
+      };
+    root.querySelectorAll("[data-uci]").forEach((b) => {
+      b.onclick = () => {
+        state.treePrefix = state.treePrefix.concat([b.dataset.uci]);
+        paintOpeningTree();
+      };
+    });
+  } catch (err) {
+    root.textContent = String(err.message || err);
+  }
+}
+
 function paintImprove(data) {
   $("#grain").textContent = grainLine(data);
+  paintWdl(data);
   const have = data.analyzed ?? 0;
   const need = data.needed ?? data.nmin ?? 30;
-  const pct = Math.min(100, Math.round((have / need) * 100));
+  const pctBar = Math.min(100, Math.round((have / need) * 100));
   if (!data.ready) {
     $("#improve-gate").innerHTML = `<div class="gate">
       <p>This list waits until a slice can be more than noise. You need about <strong>${need}</strong> analyzed games. You have <strong>${have}</strong>.</p>
-      <div class="progress" role="progressbar" aria-valuemin="0" aria-valuemax="${need}" aria-valuenow="${have}"><span style="width:${pct}%"></span></div>
-      <p class="muted">Meanwhile: import more games, run Analyze, and use Insights for counts you can trust.</p>
+      <div class="progress" role="progressbar" aria-valuemin="0" aria-valuemax="${need}" aria-valuenow="${have}"><span style="width:${pctBar}%"></span></div>
+      <p class="muted">Meanwhile: import more games, run Analyze, and use Insights for counts you can trust. Lichess PGN evals count as analyzed.</p>
     </div>`;
     $("#improve-root").innerHTML = "";
     return;
@@ -332,15 +482,19 @@ function paintImprove(data) {
 }
 
 async function refresh() {
+  await paintFooter();
   const q = state.q;
   renderFilters();
   try {
     if (state.page === "games") {
-      const data = await api.get("/api/games?q=" + encodeURIComponent(q));
+      const data = await api.get(
+        "/api/games?q=" + encodeURIComponent(q) + "&limit=" + state.limit + "&offset=" + state.offset
+      );
       paintGames(data);
       paintReview(data);
     } else if (state.page === "insights") {
       paintInsights(await api.get("/api/insights?q=" + encodeURIComponent(q)));
+      await paintOpeningTree();
     } else if (state.page === "improve") {
       const nmin = Number($("#nmin").value || 30);
       paintImprove(await api.get("/api/improve?q=" + encodeURIComponent(q) + "&nmin=" + nmin));
@@ -352,7 +506,6 @@ async function refresh() {
   } catch (err) {
     $("#grain").textContent = String(err.message || err);
   }
-  await paintFooter();
 }
 
 function paintAnalyze(s) {
@@ -381,8 +534,10 @@ function paintAnalyze(s) {
 
 const SQL_EXAMPLES = [
   { label: "Results by time control", sql: "SELECT tc_class, COUNT(*) AS n FROM v_games GROUP BY 1 ORDER BY n DESC" },
+  { label: "How games ended", sql: "SELECT termination, COUNT(*) AS n FROM v_games GROUP BY 1 ORDER BY n DESC" },
   { label: "Your wins", sql: "SELECT utc_date, white, black, result FROM v_games WHERE (you_color = 'white' AND result = '1-0') OR (you_color = 'black' AND result = '0-1') ORDER BY utc_date DESC LIMIT 50" },
   { label: "Blunders with clock", sql: "SELECT m.game_id, m.ply, m.san, m.clock_centis FROM v_moves m JOIN evaluations e ON e.game_id = m.game_id AND e.ply = m.ply WHERE e.move_class = 'blunder' LIMIT 50" },
+  { label: "Score by year", sql: "SELECT substr(replace(utc_date, '.', '-'), 1, 4) AS year, COUNT(*) AS n FROM v_games GROUP BY 1 ORDER BY 1" },
 ];
 
 async function paintSqlSchema() {
@@ -409,6 +564,7 @@ async function paintSqlSchema() {
 
 async function paintFooter() {
   const meta = await api.get("/api/meta");
+  state.years = meta.years || [];
   const n = meta.game_count ?? 0;
   $("#foot-games").textContent = `${n} game${n === 1 ? "" : "s"} local`;
   $("#foot-import").textContent = meta.last_import ? "imported " + meta.last_import : "no import yet";
@@ -431,6 +587,14 @@ document.querySelectorAll("nav button").forEach((b) => {
 $("#query-form").onsubmit = (e) => {
   e.preventDefault();
   state.q = $("#q").value.trim();
+  state.offset = 0;
+  refresh();
+};
+
+$("#btn-clear").onclick = () => {
+  state.q = "";
+  $("#q").value = "";
+  state.offset = 0;
   refresh();
 };
 
@@ -441,7 +605,7 @@ async function importFiles(files) {
   try {
     const report = await api.post("/api/import", fd, false);
     $("#import-report").textContent =
-      `inserted ${report.inserted}  ·  yours ${report.personal ?? 0}  ·  unmatched ${report.observed ?? 0}  ·  duplicates ${report.duplicates}`;
+      `inserted ${report.inserted}  ·  yours ${report.personal ?? 0}  ·  unmatched ${report.observed ?? 0}  ·  duplicates ${report.duplicates}  ·  evals ${report.with_evals ?? 0}`;
     await refresh();
   } catch (err) {
     $("#import-report").textContent = String(err.message || err);
@@ -481,7 +645,7 @@ $("#lichess-form").onsubmit = async (e) => {
       max_games: Number($("#lichess-max").value || 200),
     });
     $("#import-report").textContent =
-      `inserted ${report.inserted}  ·  yours ${report.personal ?? 0}  ·  unmatched ${report.observed ?? 0}  ·  duplicates ${report.duplicates}`;
+      `inserted ${report.inserted}  ·  yours ${report.personal ?? 0}  ·  unmatched ${report.observed ?? 0}  ·  duplicates ${report.duplicates}  ·  evals ${report.with_evals ?? 0}`;
     await refresh();
   } catch (err) {
     $("#import-report").textContent = String(err.message || err);
@@ -646,13 +810,23 @@ $("#btn-pgn").onclick = async () => {
   const pgn = window.ForkSightBoard && window.ForkSightBoard.currentPgn();
   if (pgn) await navigator.clipboard.writeText(pgn);
 };
+$("#btn-copy-link").onclick = async () => {
+  const url = window.ForkSightBoard && window.ForkSightBoard.lichessUrl();
+  if (url) {
+    await navigator.clipboard.writeText(url);
+    $("#btn-copy-link").textContent = "Copied";
+    setTimeout(() => {
+      $("#btn-copy-link").textContent = "Copy link";
+    }, 1200);
+  }
+};
 
 setInterval(() => {
   if (state.page === "analyze") refresh();
 }, 2000);
 
 window.addEventListener("DOMContentLoaded", async () => {
-  applyTheme(localStorage.getItem("forksight-theme") || "light");
+  applyTheme(localStorage.getItem("forksight-theme") || "dark");
   if (window.ForkSightBoard) window.ForkSightBoard.mountBoard();
   try {
     const s = await api.get("/api/settings");
@@ -660,6 +834,6 @@ window.addEventListener("DOMContentLoaded", async () => {
   } catch (_) {
     /* first paint */
   }
-  paintFooter();
+  await paintFooter();
   show("games");
 });

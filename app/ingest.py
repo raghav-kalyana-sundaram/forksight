@@ -7,9 +7,10 @@ from dataclasses import dataclass, field
 import chess
 import chess.pgn
 
-from app import classify, divider, openings
+from app import accuracy, classify, divider, openings
+from app.pgn_eval import best_from_comment, eval_from_comment, score_comment_evals
 from app.store import Store
-from app.versions import CLASSIFICATION_VERSION, DIVIDER_VERSION
+from app.versions import ACCURACY_VERSION, CLASSIFICATION_VERSION, DIVIDER_VERSION
 
 
 @dataclass
@@ -23,6 +24,7 @@ class ImportReport:
     files: int = 0
     personal: int = 0
     observed: int = 0
+    with_evals: int = 0
     names: list[str] = field(default_factory=list)
 
 
@@ -32,6 +34,7 @@ class GameIngest:
     you_color: str | None = None
     white: str = ""
     black: str = ""
+    with_evals: bool = False
 
 
 def _clock_centis(node: chess.pgn.GameNode) -> int | None:
@@ -72,6 +75,8 @@ def ingest_files(store: Store, files: list[tuple[str, bytes]], aliases: list[str
                 break
             out = ingest_game(store, game, aliases)
             setattr(report, out.status, getattr(report, out.status) + 1)
+            if out.with_evals:
+                report.with_evals += 1
             if out.status in ("inserted", "replaced"):
                 if out.you_color:
                     report.personal += 1
@@ -80,7 +85,34 @@ def ingest_files(store: Store, files: list[tuple[str, bytes]], aliases: list[str
                     for name in (out.white, out.black):
                         if name and name not in report.names:
                             report.names.append(name)
+    if not aliases:
+        guessed = _guess_alias(store)
+        if guessed:
+            store.save_settings({"aliases": [guessed]})
+            apply_aliases(store, [guessed])
+            report.personal = int(
+                (store.fetchone("SELECT COUNT(*) FROM games WHERE you_color IS NOT NULL") or [0])[0] or 0
+            )
+            report.observed = int(
+                (store.fetchone("SELECT COUNT(*) FROM games WHERE you_color IS NULL") or [0])[0] or 0
+            )
+            report.names = []
     return report
+
+
+def _guess_alias(store: Store) -> str | None:
+    rows = store.fetchall("SELECT white, black FROM games")
+    counts: dict[str, int] = {}
+    for white, black in rows:
+        for name in (white, black):
+            if name:
+                counts[name] = counts.get(name, 0) + 1
+    if not counts:
+        return None
+    name, n = max(counts.items(), key=lambda kv: kv[1])
+    if n >= max(3, len(rows) // 3):
+        return name
+    return None
 
 
 def json_aliases(store: Store) -> list[str]:
@@ -146,6 +178,8 @@ def ingest_game(store: Store, game: chess.pgn.Game, aliases: list[str]) -> GameI
                 "piece_count": chess.popcount(board.occupied),
                 "halfmove": board.halfmove_clock,
                 "is_castling": castle,
+                "eval_cp": eval_from_comment(node.comment),
+                "best": best_from_comment(node.comment),
             }
         )
 
@@ -154,16 +188,31 @@ def ingest_game(store: Store, game: chess.pgn.Game, aliases: list[str]) -> GameI
 
     variant = (headers.get("Variant") or "standard").strip()
     tc = classify.parse_time_control(headers.get("TimeControl"))
-    site_id = classify.parse_site_id(headers.get("Site"), headers.get("Link"))
+    site_id = classify.parse_site_id(headers.get("Site"), headers.get("Link"), headers.get("GameId"))
     utc_date = headers.get("UTCDate") or headers.get("Date") or ""
     result = headers.get("Result", "*")
     fp = classify.fingerprint(site_id, headers.get("White", ""), headers.get("Black", ""), utc_date, result, " ".join(sans))
 
-    existing = store.fetchone("SELECT has_clocks FROM games WHERE fingerprint = ?", (fp,))
+    incoming_evals = any(m.get("eval_cp") is not None for m in moves_out)
+    existing = store.fetchone(
+        "SELECT has_clocks, analysis_status, termination FROM games WHERE fingerprint = ?",
+        (fp,),
+    )
     if existing:
-        if existing[0] or not clocks_found:
-            return GameIngest("duplicates", you, headers.get("White", ""), headers.get("Black", ""))
-        # incoming has clocks and stored does not — replace
+        has_clocks, analysis_status, termination = existing
+        stale = (
+            (not has_clocks and clocks_found)
+            or (incoming_evals and analysis_status != "complete")
+            or (not termination and headers.get("Termination"))
+        )
+        if not stale:
+            return GameIngest(
+                "duplicates",
+                you,
+                headers.get("White", ""),
+                headers.get("Black", ""),
+                incoming_evals,
+            )
         replace = True
     else:
         replace = False
@@ -196,7 +245,8 @@ def ingest_game(store: Store, game: chess.pgn.Game, aliases: list[str]) -> GameI
         "black_elo": classify.parse_elo(headers.get("BlackElo")),
         "eco": eco,
         "eco_family": family,
-        "opening_name": opening_name or headers.get("Opening"),
+        "opening_name": headers.get("Opening") or opening_name,
+        "termination": _termination(headers.get("Termination"), sans[-1] if sans else None),
         "book_depth": book_depth,
         "ply_count": ply,
         "opening_end_ply": div.middle,
@@ -245,8 +295,94 @@ def ingest_game(store: Store, game: chess.pgn.Game, aliases: list[str]) -> GameI
         move_tuples,
     )
     _insert_spans(store, fp, moves_out)
+    _apply_pgn_evals(store, fp, moves_out, you)
     status = "replaced" if action == "replaced" else "inserted"
-    return GameIngest(status, you, headers.get("White", ""), headers.get("Black", ""))
+    return GameIngest(status, you, headers.get("White", ""), headers.get("Black", ""), incoming_evals)
+
+
+def _termination(raw: str | None, last_san: str | None = None) -> str | None:
+    if last_san and str(last_san).endswith("#"):
+        return "mate"
+    if not raw:
+        return None
+    t = raw.strip().lower()
+    if "time" in t or "flag" in t:
+        return "flag"
+    if "mate" in t or "checkmate" in t:
+        return "mate"
+    if "resign" in t:
+        return "resign"
+    if "abandon" in t or "left" in t:
+        return "abandon"
+    if t in ("normal", "rules infraction", "unexplained"):
+        return "normal"
+    return t or None
+
+
+def _apply_pgn_evals(store: Store, game_id: str, moves_out: list[dict], you: str | None) -> None:
+    evals = [m.get("eval_cp") for m in moves_out]
+    if not any(c is not None for c in evals):
+        return
+    movers = [m["mover"] == "white" for m in moves_out]
+    scored = score_comment_evals(evals, movers)
+    by_ply = {s.ply: s for s in scored}
+    ev_rows = []
+    cp = accuracy.INITIAL_CP
+    for m in moves_out:
+        s = by_ply.get(m["ply"])
+        if m.get("eval_cp") is not None:
+            cp = m["eval_cp"]
+        ev_rows.append(
+            (
+                game_id,
+                m["ply"],
+                12,
+                "lichess-pgn",
+                None,
+                1,
+                cp,
+                accuracy.winpct_from_cp(cp),
+                s.move_class if s else None,
+                s.winpct_loss if s else None,
+                s.accuracy if s else None,
+                None,
+                None,
+                None,
+                False,
+            )
+        )
+    store.execute("DELETE FROM evaluations WHERE game_id = ?", (game_id,))
+    store.executemany(
+        """
+        INSERT INTO evaluations (
+          game_id, ply, depth, engine_version, net_hash, multipv, eval_cp, winpct,
+          move_class, winpct_loss, accuracy, only_move, missed_win, tb_wdl, history_sensitive
+        ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+        """,
+        ev_rows,
+    )
+    user_acc = accuracy.user_accuracy(scored, you)
+    white_acc, black_acc = accuracy.game_accuracy(scored)
+    store.execute(
+        """
+        UPDATE games SET analysis_status = 'complete', analysis_depth = 12,
+          accuracy = ?, accuracy_white = ?, accuracy_black = ?, accuracy_version = ?
+        WHERE game_id = ?
+        """,
+        (user_acc, white_acc, black_acc, ACCURACY_VERSION, game_id),
+    )
+    _fill_span_entries(store, game_id, you, scored)
+
+
+def _fill_span_entries(store: Store, game_id: str, you: str | None, scored) -> None:
+    by_ply = {s.ply: s for s in scored}
+    rows = store.fetchall("SELECT span_id, start_ply FROM spans WHERE game_id = ?", (game_id,))
+    for span_id, start in rows:
+        s = by_ply.get(int(start))
+        if s is None:
+            continue
+        wp = s.winpct_after if you != "black" else 100.0 - s.winpct_after
+        store.execute("UPDATE spans SET entry_winpct = ? WHERE span_id = ?", (wp, span_id))
 
 
 def _insert_spans(store: Store, game_id: str, moves_out: list[dict]) -> None:
@@ -327,13 +463,37 @@ def apply_aliases(store: Store, aliases: list[str]) -> int:
             elif you and you != mover and opp_castled is None:
                 opp_castled = kind
         opposite = bool(user_castled and opp_castled and user_castled != opp_castled)
+        acc_row = store.fetchone(
+            "SELECT accuracy_white, accuracy_black FROM games WHERE game_id = ?",
+            (game_id,),
+        )
+        acc = None
+        if acc_row:
+            if you == "white":
+                acc = acc_row[0]
+            elif you == "black":
+                acc = acc_row[1]
         store.execute(
             """
-            UPDATE games SET user_castled = ?, opp_castled = ?, opposite_side = ?, user_castle_ply = ?
+            UPDATE games SET user_castled = ?, opp_castled = ?, opposite_side = ?, user_castle_ply = ?, accuracy = ?
             WHERE game_id = ?
             """,
-            (user_castled, opp_castled, opposite, user_castle_ply, game_id),
+            (user_castled, opp_castled, opposite, user_castle_ply, acc, game_id),
         )
+        _refill_span_winpct(store, game_id, you)
         n += 1
     return n
+
+
+def _refill_span_winpct(store: Store, game_id: str, you: str | None) -> None:
+    rows = store.fetchall("SELECT span_id, start_ply FROM spans WHERE game_id = ?", (game_id,))
+    for span_id, start in rows:
+        ev = store.fetchone(
+            "SELECT winpct FROM evaluations WHERE game_id = ? AND ply = ?",
+            (game_id, int(start)),
+        )
+        if not ev or ev[0] is None:
+            continue
+        wp = ev[0] if you != "black" else 100.0 - ev[0]
+        store.execute("UPDATE spans SET entry_winpct = ? WHERE span_id = ?", (wp, span_id))
 

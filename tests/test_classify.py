@@ -27,3 +27,5 @@ def test_aliases_both_sides_observed():
     assert you_color("Bob", "Alice", ["alice"]) == "black"
     assert you_color("Alice", "Alice", ["alice"]) is None
     assert you_color("X", "Y", ["alice"]) is None
+    assert you_color("game", "marsmelow", ["game"]) == "white"
+    assert you_color("endgame", "marsmelow", ["game"]) is None

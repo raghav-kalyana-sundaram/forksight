@@ -8,11 +8,13 @@ function drawEvalGraph(canvas, points, ply, onJump) {
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   const w = cssW;
   const h = cssH;
-  const paper = getComputedStyle(document.documentElement).getPropertyValue("--paper").trim() || "#f3efe4";
-  const ink = getComputedStyle(document.documentElement).getPropertyValue("--ink").trim() || "#1c241f";
-  const win = getComputedStyle(document.documentElement).getPropertyValue("--win").trim() || "#1f5a38";
-  const loss = getComputedStyle(document.documentElement).getPropertyValue("--loss").trim() || "#8a2c2c";
-  const rule = getComputedStyle(document.documentElement).getPropertyValue("--rule").trim() || "#c9c0ae";
+  const paper = getComputedStyle(document.documentElement).getPropertyValue("--box").trim() || "#262421";
+  const ink = getComputedStyle(document.documentElement).getPropertyValue("--ink").trim() || "#bababa";
+  const win = getComputedStyle(document.documentElement).getPropertyValue("--win").trim() || "#629924";
+  const loss = getComputedStyle(document.documentElement).getPropertyValue("--loss").trim() || "#c33";
+  const rule = getComputedStyle(document.documentElement).getPropertyValue("--rule").trim() || "#3d3a36";
+  const goodSoft = getComputedStyle(document.documentElement).getPropertyValue("--good-soft").trim() || "rgba(98, 153, 36, 0.22)";
+  const badSoft = getComputedStyle(document.documentElement).getPropertyValue("--bad-soft").trim() || "rgba(204, 51, 51, 0.22)";
   ctx.clearRect(0, 0, w, h);
   ctx.fillStyle = paper;
   ctx.fillRect(0, 0, w, h);
@@ -40,7 +42,7 @@ function drawEvalGraph(canvas, points, ply, onJump) {
   });
   ctx.lineTo(xs[xs.length - 1], mid);
   ctx.closePath();
-  ctx.fillStyle = "rgba(31, 90, 56, 0.22)";
+  ctx.fillStyle = goodSoft;
   ctx.fill();
   ctx.save();
   ctx.beginPath();
@@ -51,7 +53,7 @@ function drawEvalGraph(canvas, points, ply, onJump) {
   points.forEach((_, i) => ctx.lineTo(xs[i], ys[i]));
   ctx.lineTo(xs[xs.length - 1], mid);
   ctx.closePath();
-  ctx.fillStyle = "rgba(138, 44, 44, 0.22)";
+  ctx.fillStyle = badSoft;
   ctx.fill();
   ctx.restore();
   ctx.beginPath();

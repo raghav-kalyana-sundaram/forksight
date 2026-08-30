@@ -23,7 +23,30 @@ function grainLine(s) {
   const games = (s.games ?? 0).toLocaleString();
   const plies = (s.plies ?? 0).toLocaleString();
   const complete = (s.complete_at_depth ?? 0).toLocaleString();
-  return `${games} games  ·  ${plies} plies in this filter  ·  ${complete} analyzed at depth ${depth}`;
+  const wdl = s.wins != null ? `  ·  ${s.wins}–${s.draws}–${s.losses}` : "";
+  return `${games} games${wdl}  ·  ${plies} plies in this filter  ·  ${complete} analyzed at depth ${depth}`;
+}
+
+function tokenMap(q) {
+  const map = {};
+  const re = /([a-zA-Z_]+):("([^"]*)"|(\S+))/g;
+  let m;
+  while ((m = re.exec(String(q || "")))) {
+    map[m[1].toLowerCase()] = m[3] != null ? m[3] : m[4];
+  }
+  return map;
+}
+
+function formatTokens(map) {
+  return Object.entries(map)
+    .filter(([, v]) => v != null && v !== "")
+    .map(([k, v]) => (/\s/.test(String(v)) ? `${k}:"${v}"` : `${k}:${v}`))
+    .join(" ");
+}
+
+function pct(v) {
+  if (v == null || Number.isNaN(v)) return "—";
+  return (Number(v) * 100).toFixed(1) + "%";
 }
 
 function scoreCell(row) {

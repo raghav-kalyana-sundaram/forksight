@@ -31,6 +31,13 @@ def test_parser_every_token():
     assert "leftover" in q.bare
 
 
+def test_quoted_opening_and_term():
+    q = parse_query('opening:"French Defense: Réti-Spielmann Attack" term:flag year:2017')
+    assert q.tokens["opening"] == "French Defense: Réti-Spielmann Attack"
+    assert q.tokens["term"] == "flag"
+    assert q.tokens["year"] == "2017"
+
+
 def test_grain_counts(store, fixtures):
     ingest_files(store, [("short.pgn", (fixtures / "short.pgn").read_bytes())], aliases=["Alice"])
     whole = run_query(store, "color:white")

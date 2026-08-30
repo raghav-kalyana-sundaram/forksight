@@ -7,12 +7,14 @@ from typing import Any
 from app.classify import rating_band
 from app.labels import (
     eco_family_name,
+    expected_score,
     format_pgn_date,
     hour_band,
     length_band,
     material_imbalance,
     opening_label,
     rating_diff_band,
+    term_label,
     user_result,
 )
 from app.query import compile_query, parse_query, user_result_sql
@@ -29,7 +31,7 @@ def _wilson(successes: float, n: int, z: float = 1.96) -> tuple[float, float]:
     return max(0.0, center - margin), min(1.0, center + margin)
 
 
-def run_query(store: Store, text: str, default_tc: bool = True) -> dict[str, Any]:
+def run_query(store: Store, text: str, default_tc: bool = False) -> dict[str, Any]:
     q = parse_query(text)
     settings = store.settings_json()
     depth = store.report_depth()
@@ -74,6 +76,27 @@ def run_query(store: Store, text: str, default_tc: bool = True) -> dict[str, Any
     n = wins + draws + losses
     score = (wins + 0.5 * draws) / n if n else None
 
+    exp_row = store.fetchone(
+        """
+        SELECT AVG(
+          CASE
+            WHEN you_elo IS NULL OR opp_elo IS NULL THEN NULL
+            ELSE 1.0 / (1.0 + pow(10, (opp_elo - you_elo) / 400.0))
+          END
+        )
+        FROM (
+          SELECT DISTINCT g.game_id,
+            CASE WHEN g.you_color = 'white' THEN g.white_elo ELSE g.black_elo END AS you_elo,
+            CASE WHEN g.you_color = 'white' THEN g.black_elo ELSE g.white_elo END AS opp_elo
+          FROM _matched m
+          JOIN games g ON g.game_id = m.game_id
+          WHERE g.you_color IS NOT NULL
+        )
+        """
+    )
+    expected = float(exp_row[0]) if exp_row and exp_row[0] is not None else None
+    performance = (score - expected) if score is not None and expected is not None else None
+
     ply_acc = store.fetchone(
         """
         SELECT AVG(e.accuracy)
@@ -98,6 +121,8 @@ def run_query(store: Store, text: str, default_tc: bool = True) -> dict[str, Any
         "draws": draws,
         "losses": losses,
         "score": score,
+        "expected": expected,
+        "performance": performance,
         "accuracy_plies": ply_acc[0],
         "partial": complete_n < games_n and ply_acc[0] is not None,
         "accuracy_note": "Lichess formula (win% loss → accuracy). Only your moves in finished analyses.",
@@ -121,7 +146,9 @@ def games_table(store: Store, text: str, limit: int = 200, offset: int = 0) -> d
                {_you_elo_sql()} AS you_elo,
                {_opp_elo_sql()} AS opp_elo,
                g.tc_class, g.eco, g.eco_family, g.opening_name, g.result,
-               g.analysis_status, g.accuracy, g.analysis_depth, g.site_id, g.ply_count
+               g.analysis_status, g.accuracy, g.analysis_depth, g.site_id, g.ply_count,
+               g.termination,
+               (SELECT e.engine_version FROM evaluations e WHERE e.game_id = g.game_id LIMIT 1) AS eval_source
         FROM games g
         WHERE g.game_id IN (SELECT DISTINCT game_id FROM _matched)
         ORDER BY g.utc_date DESC NULLS LAST, g.utc_time DESC NULLS LAST
@@ -136,7 +163,9 @@ def games_table(store: Store, text: str, limit: int = 200, offset: int = 0) -> d
         if you_elo is not None and opp_elo is not None:
             diff = int(you_elo) - int(opp_elo)
         status = r[11]
-        acc = r[12] if status == "complete" and r[12] is not None and r[12] > 0 else None
+        acc = r[12] if status == "complete" and r[12] is not None else None
+        exp = expected_score(you_elo, opp_elo)
+        term = r[16]
         out_rows.append(
             {
                 "game_id": r[0],
@@ -148,6 +177,7 @@ def games_table(store: Store, text: str, limit: int = 200, offset: int = 0) -> d
                 "opp_elo": opp_elo,
                 "rating": opp_elo,
                 "rating_diff": diff,
+                "expected": exp,
                 "tc_class": r[6],
                 "eco": r[7],
                 "opening": opening_label(r[9], r[7], r[8]),
@@ -158,10 +188,13 @@ def games_table(store: Store, text: str, limit: int = 200, offset: int = 0) -> d
                 "analysis_depth": r[13],
                 "site_id": r[14],
                 "ply_count": r[15],
+                "termination": term,
+                "termination_label": term_label(term),
+                "eval_source": r[17],
             }
         )
     review_bits = _review_from_matched(store, limit=8)
-    return {**summary, "rows": out_rows, **review_bits}
+    return {**summary, "rows": out_rows, "limit": limit, "offset": offset, "total": summary["games"], **review_bits}
 
 
 def _pack_group(k, n, w, d, l, acc, *, n_unit: str, query: str | None = None, label: str | None = None) -> dict[str, Any]:
@@ -193,7 +226,8 @@ def _group(store: Store, select_key: str, extra_where: str = "1=1", n_unit: str 
         FROM (
           SELECT DISTINCT g.game_id, g.you_color, g.result, g.accuracy, g.analysis_status,
                  g.tc_class, g.eco_family, g.opening_name, g.eco, g.user_castled, g.opp_castled, g.opposite_side,
-                 g.white_elo, g.black_elo, g.utc_time, g.utc_date, g.ply_count,
+                 g.white_elo, g.black_elo, g.utc_time, g.utc_date, g.ply_count, g.termination,
+                 g.white, g.black,
                  ({user_result_sql()}) AS r
           FROM _matched m
           JOIN games g ON g.game_id = m.game_id
@@ -527,6 +561,21 @@ def insights(store: Store, text: str) -> dict[str, Any]:
             "session": extra["session"],
             "conversion": _conversion(store),
             "time_trouble": _time_trouble(store),
+            "termination": [
+                {**r, "label": term_label(str(r["key"])), "query": f"term:{r['key']}"}
+                for r in _group(store, "g.termination")
+                if r["key"]
+            ],
+            "year": [
+                {**r, "label": str(r["key"]), "query": f"year:{r['key']}"}
+                for r in _group(store, "substr(replace(COALESCE(g.utc_date, ''), '.', '-'), 1, 4)")
+                if r["key"]
+            ],
+            "opponent": [
+                {**r, "label": str(r["key"]), "query": f'opponent:"{r["key"]}"' if " " in str(r["key"]) else f"opponent:{r['key']}"}
+                for r in _group(store, "CASE WHEN g.you_color = 'white' THEN g.black ELSE g.white END")
+                if r["key"]
+            ][:20],
             "phase": [
                 {
                     "key": r[0],
@@ -620,7 +669,15 @@ def improve(store: Store, text: str, nmin: int = 30) -> dict[str, Any]:
         for row in _group(store, "COALESCE(g.opening_name, g.eco_family, 'Unknown')"):
             if row["key"] is None:
                 continue
-            groups.append({**row, "slice": row["label"], "kind": "opening", "query": f'opening:{row["key"]}'})
+            qkey = str(row["key"])
+            groups.append(
+                {
+                    **row,
+                    "slice": row["label"],
+                    "kind": "opening",
+                    "query": f'opening:"{qkey}"' if " " in qkey else f"opening:{qkey}",
+                }
+            )
         for row in _group(store, "g.you_color"):
             groups.append({**row, "slice": str(row["key"]), "kind": "color", "query": f"color:{row['key']}"})
         for row in _group(store, "g.tc_class"):
@@ -688,7 +745,8 @@ def _review_from_matched(store: Store, limit: int = 8) -> dict[str, Any]:
         SELECT g.game_id, g.utc_date, g.you_color,
                CASE WHEN g.you_color = 'white' THEN g.black ELSE g.white END,
                {_opp_elo_sql()},
-               g.tc_class, g.opening_name, g.eco, g.analysis_status, g.accuracy, g.site_id
+               g.tc_class, g.opening_name, g.eco, g.analysis_status, g.accuracy, g.site_id,
+               g.termination
         FROM games g
         WHERE g.game_id IN (SELECT DISTINCT game_id FROM _matched)
           AND ({user_result_sql()}) = 'loss'
@@ -728,6 +786,8 @@ def _review_from_matched(store: Store, limit: int = 8) -> dict[str, Any]:
                 "analysis_status": row[8],
                 "accuracy": row[9] if row[8] == "complete" else None,
                 "site_id": row[10],
+                "termination": row[11],
+                "termination_label": term_label(row[11]),
                 "turning_points": [
                     {
                         "ply": t[0],
@@ -838,21 +898,13 @@ def explorer(store: Store, fens: list[str] | None = None, uci_prefix: list[str] 
     import chess
 
     board = chess.Board()
-    for uci in uci_prefix or []:
+    prefix = list(uci_prefix or [])
+    for uci in prefix:
         board.push_uci(uci)
     from app.classify import fen_norm
 
     fen = fen_norm(board)
-    rows = store.fetchall(
-        """
-        SELECT m2.san, m2.uci,
-               COUNT(*) AS n,
-               SUM(CASE WHEN r = 'win' THEN 1 ELSE 0 END) AS w,
-               SUM(CASE WHEN r = 'draw' THEN 1 ELSE 0 END) AS d,
-               SUM(CASE WHEN r = 'loss' THEN 1 ELSE 0 END) AS l
-        FROM moves m
-        JOIN moves m2 ON m2.game_id = m.game_id AND m2.ply = m.ply + 1
-        JOIN games g ON g.game_id = m.game_id
+    result_join = """
         JOIN (
           SELECT game_id,
             CASE
@@ -863,14 +915,45 @@ def explorer(store: Store, fens: list[str] | None = None, uci_prefix: list[str] 
             END AS r
           FROM games
         ) rr ON rr.game_id = m.game_id
-        WHERE m.fen_norm = ?
-          AND g.variant IN ('standard', 'chess')
-          AND g.you_color IS NOT NULL
-        GROUP BY 1, 2
-        ORDER BY n DESC
-        """,
-        (fen,),
-    )
+    """
+    if not prefix:
+        rows = store.fetchall(
+            f"""
+            SELECT m.san, m.uci,
+                   COUNT(*) AS n,
+                   SUM(CASE WHEN r = 'win' THEN 1 ELSE 0 END) AS w,
+                   SUM(CASE WHEN r = 'draw' THEN 1 ELSE 0 END) AS d,
+                   SUM(CASE WHEN r = 'loss' THEN 1 ELSE 0 END) AS l
+            FROM moves m
+            JOIN games g ON g.game_id = m.game_id
+            {result_join}
+            WHERE m.ply = 1
+              AND g.variant IN ('standard', 'chess')
+              AND g.you_color IS NOT NULL
+            GROUP BY 1, 2
+            ORDER BY n DESC
+            """
+        )
+    else:
+        rows = store.fetchall(
+            f"""
+            SELECT m2.san, m2.uci,
+                   COUNT(*) AS n,
+                   SUM(CASE WHEN r = 'win' THEN 1 ELSE 0 END) AS w,
+                   SUM(CASE WHEN r = 'draw' THEN 1 ELSE 0 END) AS d,
+                   SUM(CASE WHEN r = 'loss' THEN 1 ELSE 0 END) AS l
+            FROM moves m
+            JOIN moves m2 ON m2.game_id = m.game_id AND m2.ply = m.ply + 1
+            JOIN games g ON g.game_id = m.game_id
+            {result_join}
+            WHERE m.fen_norm = ?
+              AND g.variant IN ('standard', 'chess')
+              AND g.you_color IS NOT NULL
+            GROUP BY 1, 2
+            ORDER BY n DESC
+            """,
+            (fen,),
+        )
     moves = []
     for san, uci, n, w, d, l in rows:
         n = int(n)

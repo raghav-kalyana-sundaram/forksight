@@ -90,8 +90,9 @@ def you_color(white: str, black: str, aliases: list[str]) -> str | None:
         return None
     w = white.strip().lower()
     b = black.strip().lower()
-    w_hit = any(w == a or a in w for a in names)
-    b_hit = any(b == a or a in b for a in names)
+    # Exact match only — substring would make alias "game" claim "endgame".
+    w_hit = w in names
+    b_hit = b in names
     if w_hit and b_hit:
         return None
     if w_hit:
@@ -101,7 +102,7 @@ def you_color(white: str, black: str, aliases: list[str]) -> str | None:
     return None
 
 
-def parse_site_id(site: str | None, link: str | None) -> str | None:
+def parse_site_id(site: str | None, link: str | None, game_id: str | None = None) -> str | None:
     for value in (link, site):
         if not value:
             continue
@@ -111,6 +112,8 @@ def parse_site_id(site: str | None, link: str | None) -> str | None:
         m = re.search(r"chess\.com/game/(?:live|daily)/(\d+)", value)
         if m:
             return f"cc-{m.group(1)}"
+    if game_id and re.fullmatch(r"[A-Za-z0-9]{8}", game_id):
+        return game_id
     return None
 
 

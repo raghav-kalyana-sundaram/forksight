@@ -8,7 +8,7 @@ from pydantic import BaseModel
 
 from app import ingest, stats
 from app.engine import Analyzer, JobSettings
-from app.labels import user_result
+from app.labels import material_imbalance, term_label, user_result
 from app.lichess import fetch_user_pgn
 from app.store import Store
 
@@ -142,8 +142,8 @@ def recompute(x_forksight_request: str | None = Header(default=None)) -> dict[st
 
 
 @router.get("/games")
-def games(q: str = "", limit: int = 200, offset: int = 0, all_tc: bool = False) -> dict[str, Any]:
-    return stats.games_table(store(), q, limit=limit, offset=offset) if True else {}
+def games(q: str = "", limit: int = 50, offset: int = 0) -> dict[str, Any]:
+    return stats.games_table(store(), q, limit=limit, offset=offset)
 
 
 @router.get("/insights")
@@ -188,8 +188,11 @@ def game(game_id: str) -> dict[str, Any]:
     )
     start = s.fetchone("SELECT eval_cp, winpct FROM evaluations WHERE game_id = ? AND ply = 0", (game_id,))
     pgn_row = s.fetchone("SELECT pgn FROM games WHERE game_id = ?", (game_id,))
+    src = s.fetchone("SELECT engine_version FROM evaluations WHERE game_id = ? LIMIT 1", (game_id,))
     game_d["user_result"] = user_result(game_d.get("you_color"), game_d.get("result"))
+    game_d["termination_label"] = term_label(game_d.get("termination"))
     game_d["pgn"] = pgn_row[0] if pgn_row else ""
+    game_d["eval_source"] = src[0] if src else None
     return {
         "game": game_d,
         "start_eval": {"eval_cp": start[0], "winpct": start[1]} if start else None,
@@ -202,6 +205,7 @@ def game(game_id: str) -> dict[str, Any]:
                 "mover": r[4],
                 "clock_centis": r[5],
                 "material": r[6],
+                "material_label": material_imbalance(r[6]),
                 "phase": r[7],
                 "castling": r[8],
                 "eval_cp": r[9],

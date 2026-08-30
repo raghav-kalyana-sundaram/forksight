@@ -57,6 +57,7 @@ CREATE TABLE IF NOT EXISTS games (
     divider_version INTEGER,
     accuracy_version INTEGER,
     pgn TEXT,
+    termination TEXT,
     imported_at TIMESTAMP DEFAULT current_timestamp
 );
 
@@ -142,10 +143,10 @@ CREATE INDEX IF NOT EXISTS idx_spans_mat ON spans(material_you);
 CREATE INDEX IF NOT EXISTS idx_eval_fen ON eval_cache(fen_norm);
 
 CREATE OR REPLACE VIEW v_games AS
-SELECT game_id, site_id, white, black, you_color, result, utc_date, tc_class,
+SELECT game_id, site_id, white, black, you_color, result, utc_date, utc_time, tc_class,
        variant, white_elo, black_elo, eco, eco_family, opening_name, book_depth,
        ply_count, opening_end_ply, endgame_start_ply, user_castled, opp_castled,
-       opposite_side, analysis_status, analysis_depth, accuracy, has_clocks
+       opposite_side, analysis_status, analysis_depth, accuracy, has_clocks, termination
 FROM games;
 
 CREATE OR REPLACE VIEW v_moves AS
@@ -173,6 +174,15 @@ class Store:
 
     def _apply_schema(self) -> None:
         with self._lock:
+            existing = self._conn.execute(
+                "SELECT COUNT(*) FROM information_schema.tables WHERE table_name = 'games'"
+            ).fetchone()
+            if existing and existing[0]:
+                cols = {r[0] for r in self._conn.execute("DESCRIBE games").fetchall()}
+                if "termination" not in cols:
+                    self._conn.execute("ALTER TABLE games ADD COLUMN termination TEXT")
+                if "utc_time" not in cols:
+                    self._conn.execute("ALTER TABLE games ADD COLUMN utc_time TEXT")
             self._conn.execute(SCHEMA)
 
     def _reset_crashed_jobs(self) -> None:
@@ -332,6 +342,18 @@ class Store:
             "observed_games": int(
                 (self.fetchone("SELECT COUNT(*) FROM games WHERE you_color IS NULL") or [0])[0] or 0
             ),
+            "years": [
+                r[0]
+                for r in self.fetchall(
+                    """
+                    SELECT DISTINCT substr(replace(COALESCE(utc_date, ''), '.', '-'), 1, 4)
+                    FROM games
+                    WHERE utc_date IS NOT NULL AND utc_date <> ''
+                    ORDER BY 1 DESC
+                    """
+                )
+                if r[0] and r[0].isdigit()
+            ],
             "observed_names": [
                 r[0]
                 for r in self.fetchall(

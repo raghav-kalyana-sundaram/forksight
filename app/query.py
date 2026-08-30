@@ -23,6 +23,8 @@ GAME_TOKENS = {
     "length",
     "ratediff",
     "tod",
+    "term",
+    "evalsrc",
 }
 PLY_TOKENS = {"material", "material_wb", "pieces", "phase", "entry"}
 
@@ -113,7 +115,7 @@ def compile_query(
     q: Query,
     *,
     include_observed: bool,
-    default_tc: tuple[str, ...] = ("blitz", "rapid"),
+    default_tc: tuple[str, ...] = (),
     report_depth: int | None,
 ) -> tuple[str, list, str]:
     """Return (sql selecting matched game_id, ply, params, explanation)."""
@@ -210,6 +212,25 @@ def compile_query(
             wheres.append(f"({hour_sql}) >= 12 AND ({hour_sql}) < 18")
         elif key == "evening":
             wheres.append(f"({hour_sql}) >= 18")
+
+    if term := q.tokens.get("term"):
+        t = term.lower()
+        if t in ("flag", "mate", "resign", "abandon", "normal"):
+            wheres.append("g.termination = ?")
+            params.append(t)
+
+    if evalsrc := q.tokens.get("evalsrc"):
+        key = evalsrc.lower()
+        if key in ("pgn", "lichess", "lichess-pgn"):
+            wheres.append(
+                "EXISTS (SELECT 1 FROM evaluations e WHERE e.game_id = g.game_id AND e.engine_version = 'lichess-pgn')"
+            )
+        elif key in ("stockfish", "engine"):
+            wheres.append(
+                "EXISTS (SELECT 1 FROM evaluations e WHERE e.game_id = g.game_id AND COALESCE(e.engine_version, '') <> 'lichess-pgn')"
+            )
+        elif key in ("none", "no"):
+            wheres.append("NOT EXISTS (SELECT 1 FROM evaluations e WHERE e.game_id = g.game_id)")
 
     if rating := q.tokens.get("rating"):
         lo, hi = _range(rating)

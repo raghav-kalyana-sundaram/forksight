@@ -77,20 +77,23 @@ function render() {
     lastMove: ply > 0 ? uciSquares(game.moves[ply - 1].uci) : undefined,
   });
   const ev = currentEval();
-  const clock = mv && mv.clock_centis != null ? `clock ${formatClock(mv.clock_centis)}` : "";
   const phase = mv?.phase || "opening";
+  const src =
+    g.eval_source === "lichess-pgn" ? "Lichess eval" : g.eval_source ? "Stockfish" : "";
   const facts = document.getElementById("board-facts");
   facts.innerHTML = `
     <div class="who">${escapeHtml(g.white)} — ${escapeHtml(g.black)}
       <span class="result ${g.user_result || ""}">${userResultLabel(g)}</span>
     </div>
-    <div>${escapeHtml(g.opening_name || "—")}  ·  ${g.eco || ""}  ·  ${g.tc_class || ""}</div>
-    <div class="mono">${phase}${mv?.material ? " · " + escapeHtml(materialHint(mv.material)) : ""}${clock ? " · " + clock : ""}</div>
+    <div>${escapeHtml(g.opening_name || "—")}  ·  ${g.eco || ""}  ·  ${g.tc_class || ""}  ·  ${escapeHtml(g.termination_label || "")}</div>
+    <div class="mono">${phase}${mv?.material_label ? " · " + escapeHtml(mv.material_label) : mv?.material ? " · " + escapeHtml(materialHint(mv.material)) : ""}</div>
     <div class="eval-line">Eval (White) <strong class="mono">${formatEval(ev)}</strong>
+      ${src ? `<span class="badge ${g.eval_source === "lichess-pgn" ? "pgn" : "engine"}">${src}</span>` : ""}
       ${mv?.move_class ? `<span class="cls ${mv.move_class}">${mv.move_class}${GLYPH[mv.move_class] ? " " + GLYPH[mv.move_class] : ""}</span>` : ""}
       ${mv?.accuracy != null ? `<span class="muted">acc ${acc(mv.accuracy)}</span>` : ""}
     </div>
   `;
+  paintClocks();
   const list = document.getElementById("movelist");
   const pairs = [];
   for (let i = 0; i < game.moves.length; i += 2) {
@@ -151,15 +154,55 @@ function render() {
     render();
   });
 
+  const url = lichessUrl();
   const link = document.getElementById("btn-lichess");
+  const copy = document.getElementById("btn-copy-link");
   if (link) {
-    if (g.site_id && String(g.site_id).length === 8) {
-      link.href = "https://lichess.org/" + g.site_id;
+    if (url) {
+      link.href = url;
       link.classList.remove("hidden");
     } else {
       link.classList.add("hidden");
     }
   }
+  if (copy) copy.classList.toggle("hidden", !url);
+}
+
+function clocksAt(p) {
+  let white = null;
+  let black = null;
+  if (!game) return { white, black };
+  for (const m of game.moves) {
+    if (m.ply > p) break;
+    if (m.clock_centis == null) continue;
+    if (m.mover === "white") white = m.clock_centis;
+    else black = m.clock_centis;
+  }
+  return { white, black };
+}
+
+function paintClocks() {
+  const el = document.getElementById("clocks");
+  if (!el || !game) return;
+  const c = clocksAt(ply);
+  if (c.white == null && c.black == null) {
+    el.innerHTML = "";
+    return;
+  }
+  const low = (centis) => (centis != null && centis < 3000 ? "low" : "");
+  const top = flipped ? "white" : game.game.you_color === "black" ? "white" : "black";
+  const bot = top === "white" ? "black" : "white";
+  const name = (side) => (side === "white" ? game.game.white : game.game.black);
+  el.innerHTML = `
+    <span class="${low(c[top])}">${escapeHtml(name(top))} ${formatClock(c[top]) || "—"}</span>
+    <span class="${low(c[bot])}">${escapeHtml(name(bot))} ${formatClock(c[bot]) || "—"}</span>
+  `;
+}
+
+function lichessUrl() {
+  const id = game && game.game && game.game.site_id;
+  if (id && /^[A-Za-z0-9]{8}$/.test(String(id))) return "https://lichess.org/" + id;
+  return "";
 }
 
 function isYourMove(g, m) {
@@ -196,6 +239,7 @@ window.ForkSightBoard = {
   currentId: () => (game && game.game ? game.game.game_id : null),
   currentPgn: () => (game && game.game ? game.game.pgn : ""),
   currentFen: () => fenAt(ply),
+  lichessUrl,
   go,
   flip: () => {
     flipped = !flipped;
@@ -223,6 +267,11 @@ document.addEventListener("keydown", (e) => {
   if (e.key === "End") {
     e.preventDefault();
     ply = game.moves.length;
+    render();
+  }
+  if (e.key === "f" || e.key === "F") {
+    e.preventDefault();
+    flipped = !flipped;
     render();
   }
 });

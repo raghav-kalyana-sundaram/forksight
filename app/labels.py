@@ -186,13 +186,29 @@ def user_result(you_color: str | None, pgn_result: str | None) -> str | None:
     return None
 
 
+TERM_LABELS = {
+    "flag": "Time forfeit",
+    "mate": "Checkmate",
+    "resign": "Resignation",
+    "abandon": "Abandoned",
+    "normal": "Normal",
+}
+
+
+def term_label(key: str | None) -> str:
+    if not key:
+        return ""
+    return TERM_LABELS.get(key, key.replace("_", " ").title())
+
+
 def format_pgn_date(raw: str | None) -> str:
     if not raw:
         return ""
     text = raw.strip().replace(".", "-")
     for fmt in ("%Y-%m-%d", "%Y/%m/%d"):
         try:
-            return datetime.strptime(text[:10], fmt).strftime("%-d %b %Y")
+            dt = datetime.strptime(text[:10], fmt)
+            return f"{dt.day} {dt.strftime('%b %Y')}"
         except ValueError:
             continue
     return raw
@@ -203,6 +219,12 @@ def format_clock(centis: int | None) -> str:
         return ""
     s = max(0, int(centis) // 100)
     return f"{s // 60}:{s % 60:02d}"
+
+
+def expected_score(you_elo: int | None, opp_elo: int | None) -> float | None:
+    if you_elo is None or opp_elo is None:
+        return None
+    return 1.0 / (1.0 + 10 ** ((int(opp_elo) - int(you_elo)) / 400.0))
 
 
 def rating_diff_band(diff: int | None) -> str | None:
