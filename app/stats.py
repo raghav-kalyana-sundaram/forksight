@@ -17,7 +17,7 @@ from app.labels import (
     term_label,
     user_result,
 )
-from app.query import compile_query, parse_query, user_result_sql
+from app.query import compile_query, parse_query, pieces_sql, user_result_sql
 from app.store import Store
 
 
@@ -489,7 +489,17 @@ def insights(store: Store, text: str) -> dict[str, Any]:
         label = material_imbalance(mat)
         slot = imbalance.setdefault(
             label,
-            {"key": label, "label": label, "n": 0, "spans": 0, "wins": 0, "draws": 0, "losses": 0, "signatures": 0},
+            {
+                "key": label,
+                "label": label,
+                "n": 0,
+                "spans": 0,
+                "wins": 0,
+                "draws": 0,
+                "losses": 0,
+                "signatures": 0,
+                "_sig_counts": {},
+            },
         )
         slot["n"] += int(n_games or 0)
         slot["spans"] += int(n_spans or 0)
@@ -497,17 +507,22 @@ def insights(store: Store, text: str) -> dict[str, Any]:
         slot["draws"] += int(d or 0)
         slot["losses"] += int(l or 0)
         slot["signatures"] += 1
+        if mat:
+            slot["_sig_counts"][mat] = slot["_sig_counts"].get(mat, 0) + int(n_games or 0)
     material_rows = []
     for slot in sorted(imbalance.values(), key=lambda s: s["n"], reverse=True)[:20]:
         n = slot["n"]
-        material_rows.append(
-            {
-                **slot,
-                "n_unit": "game-reaches (a game can appear in several rows)",
-                "score": (slot["wins"] + 0.5 * slot["draws"]) / n if n else None,
-                "accuracy": None,
-            }
-        )
+        sig_counts = slot.pop("_sig_counts")
+        row = {
+            **slot,
+            "n_unit": "game-reaches (a game can appear in several rows)",
+            "score": (slot["wins"] + 0.5 * slot["draws"]) / n if n else None,
+            "accuracy": None,
+        }
+        query = _material_query(sig_counts)
+        if query:
+            row["query"] = query
+        material_rows.append(row)
 
     extra = _python_groups(store)
     openings = _group(store, "COALESCE(g.opening_name, g.eco, 'Unknown')")
@@ -590,8 +605,118 @@ def insights(store: Store, text: str) -> dict[str, Any]:
                 if r[0]
             ],
             "material": material_rows,
+            "positions": _position_rows(store),
+            "pieces": _piece_rows(store),
         },
     }
+
+
+def _material_query(sig_counts: dict[str, int]) -> str | None:
+    if not sig_counts:
+        return None
+    best_n = max(sig_counts.values())
+    best = [sig for sig, n in sig_counts.items() if n == best_n]
+    if len(best) != 1:
+        return None
+    return f"material:{best[0]}"
+
+
+_PIECE_SLICES = (
+    ("queens-off", "queens traded", "no=Q"),
+    ("you-only-queen", "you have the only queen", "me=Q,opp=0Q"),
+    ("they-only-queen", "they have the only queen", "opp=Q,me=0Q"),
+    ("both-queens", "both queens on", "me=Q,opp=Q"),
+    ("rook-endgame", "rook endgame", "no=QBN,me=R,opp=R"),
+    ("minor-ending", "minor-piece ending", "no=QR"),
+)
+
+
+def _position_rows(store: Store) -> list[dict[str, Any]]:
+    import chess
+
+    from app.classify import fen_norm
+
+    start = fen_norm(chess.Board())
+    rows = store.fetchall(
+        f"""
+        SELECT m.fen_norm,
+               MIN(m.ply) AS ply,
+               COUNT(DISTINCT m.game_id) AS n,
+               COUNT(DISTINCT CASE WHEN ({user_result_sql()}) = 'win' THEN m.game_id END) AS w,
+               COUNT(DISTINCT CASE WHEN ({user_result_sql()}) = 'draw' THEN m.game_id END) AS d,
+               COUNT(DISTINCT CASE WHEN ({user_result_sql()}) = 'loss' THEN m.game_id END) AS l
+        FROM moves m
+        JOIN (SELECT DISTINCT game_id FROM _matched) mm ON mm.game_id = m.game_id
+        JOIN games g ON g.game_id = m.game_id
+        WHERE m.fen_norm IS NOT NULL
+          AND m.fen_norm <> ?
+        GROUP BY m.fen_norm
+        HAVING COUNT(DISTINCT m.game_id) >= 3
+        ORDER BY n DESC, ply
+        LIMIT 30
+        """,
+        (start,),
+    )
+    out = []
+    for fen, ply, n, w, d, l in rows:
+        n, w, d, l = int(n or 0), int(w or 0), int(d or 0), int(l or 0)
+        side = "white" if len(str(fen).split()) > 1 and str(fen).split()[1] == "w" else "black"
+        out.append(
+            {
+                "key": fen,
+                "label": f"ply {int(ply)} · {side} to move",
+                "n": n,
+                "wins": w,
+                "draws": d,
+                "losses": l,
+                "score": (w + 0.5 * d) / n if n else None,
+                "query": f'fen:"{fen}"',
+            }
+        )
+    return out
+
+
+def _piece_rows(store: Store) -> list[dict[str, Any]]:
+    selects = []
+    for clause, _params in (pieces_sql(spec) for _key, _label, spec in _PIECE_SLICES):
+        selects.append(f"COUNT(DISTINCT CASE WHEN {clause} THEN m.game_id END)")
+        selects.append(
+            f"COUNT(DISTINCT CASE WHEN {clause} AND ({user_result_sql()}) = 'win' THEN m.game_id END)"
+        )
+        selects.append(
+            f"COUNT(DISTINCT CASE WHEN {clause} AND ({user_result_sql()}) = 'draw' THEN m.game_id END)"
+        )
+        selects.append(
+            f"COUNT(DISTINCT CASE WHEN {clause} AND ({user_result_sql()}) = 'loss' THEN m.game_id END)"
+        )
+    row = store.fetchone(
+        f"""
+        SELECT {", ".join(selects)}
+        FROM moves m
+        JOIN (SELECT DISTINCT game_id FROM _matched) mm ON mm.game_id = m.game_id
+        JOIN games g ON g.game_id = m.game_id
+        """
+    )
+    if row is None:
+        return []
+    out = []
+    for i, (key, label, spec) in enumerate(_PIECE_SLICES):
+        n, w, d, l = [int(row[i * 4 + j] or 0) for j in range(4)]
+        if n == 0:
+            continue
+        out.append(
+            {
+                "key": key,
+                "label": label,
+                "n": n,
+                "wins": w,
+                "draws": d,
+                "losses": l,
+                "score": (w + 0.5 * d) / n if n else None,
+                "query": f"pieces:{spec}",
+            }
+        )
+    return out
 
 
 def _shrink_k(scores: list[float], global_score: float) -> float:

@@ -26,7 +26,7 @@ GAME_TOKENS = {
     "term",
     "evalsrc",
 }
-PLY_TOKENS = {"material", "material_wb", "pieces", "phase", "entry"}
+PLY_TOKENS = {"material", "material_wb", "pieces", "phase", "entry", "fen"}
 
 
 @dataclass
@@ -290,7 +290,15 @@ def compile_query(
     if pieces := q.tokens.get("pieces"):
         clause, extra = pieces_sql(pieces)
         ply_wheres.append(clause)
-        # params already need the dynamic columns — pieces_sql is self-contained SQL
+        params.extend(extra)
+
+    if "fen" in q.tokens:
+        norm = fen_norm_token(q.tokens["fen"])
+        if norm is None:
+            ply_wheres.append("1=0")
+        else:
+            ply_wheres.append("m.fen_norm = ?")
+            params.append(norm)
 
     if castled := q.tokens.get("castled"):
         kind = castled.lower()
@@ -362,35 +370,77 @@ def classify_sig(token: str) -> str:
     return t
 
 
+def fen_norm_token(raw: str) -> str | None:
+    """Normalize a FEN query value to moves.fen_norm. None if it cannot be parsed."""
+    import chess
+
+    from app.classify import fen_norm
+
+    text = (raw or "").strip()
+    if not text:
+        return None
+    try:
+        return fen_norm(chess.Board(text))
+    except Exception:
+        return None
+
+
+_PIECE_COL = {"Q": "q", "R": "r", "B": "b", "N": "n", "P": "p"}
+
+
+def _piece_atoms(raw: str) -> list[tuple[str, str]]:
+    """Parse Q, R+P, 0Q, or !Q into (letter, 'has'|'zero')."""
+    s = raw.upper().replace(" ", "")
+    out: list[tuple[str, str]] = []
+    i = 0
+    while i < len(s):
+        if s[i] == "+":
+            i += 1
+            continue
+        kind = "has"
+        if s[i] in ("0", "!"):
+            kind = "zero"
+            i += 1
+        if i >= len(s) or s[i] not in _PIECE_COL:
+            i += 1
+            continue
+        out.append((s[i], kind))
+        i += 1
+    return out
+
+
 def pieces_sql(spec: str) -> tuple[str, list]:
+    """pieces:me=R+P,opp=N,no=Q
+
+    me/opp letters mean that side has at least one. Prefix 0 or ! means that
+    side has zero (opp=0Q, opp=!Q). no= still means both sides have zero.
+    """
     me = opp = no = ""
     for part in spec.split(","):
         if "=" not in part:
             continue
         k, v = part.split("=", 1)
-        k, v = k.strip().lower(), v.strip().upper().replace("+", "")
+        k, v = k.strip().lower(), v.strip()
         if k == "me":
             me = v
         elif k in ("opp", "op"):
             opp = v
         elif k == "no":
             no = v
-    col = {"Q": "q", "R": "r", "B": "b", "N": "n", "P": "p"}
 
     def side_expr(letter: str, mine: bool) -> str:
-        c = col[letter]
+        c = _PIECE_COL[letter]
         if mine:
             return f"CASE WHEN g.you_color = 'black' THEN m.{c}_b ELSE m.{c}_w END"
         return f"CASE WHEN g.you_color = 'black' THEN m.{c}_w ELSE m.{c}_b END"
 
     bits = ["1=1"]
-    for letter in me:
-        if letter in col:
-            bits.append(f"{side_expr(letter, True)} >= 1")
-    for letter in opp:
-        if letter in col:
-            bits.append(f"{side_expr(letter, False)} >= 1")
-    for letter in no:
-        if letter in col:
-            bits.append(f"(m.{col[letter]}_w + m.{col[letter]}_b) = 0")
+    for letter, kind in _piece_atoms(me):
+        op = ">= 1" if kind == "has" else "= 0"
+        bits.append(f"{side_expr(letter, True)} {op}")
+    for letter, kind in _piece_atoms(opp):
+        op = ">= 1" if kind == "has" else "= 0"
+        bits.append(f"{side_expr(letter, False)} {op}")
+    for letter, _kind in _piece_atoms(no):
+        bits.append(f"(m.{_PIECE_COL[letter]}_w + m.{_PIECE_COL[letter]}_b) = 0")
     return "(" + " AND ".join(bits) + ")", []

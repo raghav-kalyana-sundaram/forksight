@@ -20,11 +20,9 @@ const api = {
 
 function grainLine(s) {
   const depth = s.report_depth != null ? s.report_depth : "—";
-  const games = (s.games ?? 0).toLocaleString();
   const plies = (s.plies ?? 0).toLocaleString();
   const complete = (s.complete_at_depth ?? 0).toLocaleString();
-  const wdl = s.wins != null ? `  ·  ${s.wins}–${s.draws}–${s.losses}` : "";
-  return `${games} games${wdl}  ·  ${plies} plies in this filter  ·  ${complete} analyzed at depth ${depth}`;
+  return `${plies} plies in this filter  ·  ${complete} analyzed at depth ${depth}`;
 }
 
 function tokenMap(q) {
@@ -75,8 +73,8 @@ function resultLabel(r) {
   return r || "—";
 }
 
-function groupTable(title, rows, { nLabel = "games", extra = "" } = {}) {
-  if (!rows || !rows.length) return `<h3>${title}</h3><p class="muted">Nothing in this filter.</p>`;
+function groupTable(title, rows, { nLabel = "games", extra = "", wide = false } = {}) {
+  if (!rows || !rows.length) return `<section class="block${wide ? " wide" : ""}"><h3>${title}</h3><p class="muted">Nothing in this filter.</p></section>`;
   const showWdl = rows.some((r) => r.wins != null);
   const showScore = rows.some((r) => r.score != null);
   const showAcc = rows.some((r) => r.accuracy != null);
@@ -95,17 +93,17 @@ function groupTable(title, rows, { nLabel = "games", extra = "" } = {}) {
       </tr>`;
     })
     .join("");
-  const blunderHead = rows.some((r) => r.blunder_rate != null) ? "<th>Blunders</th>" : "";
-  return `<section class="block">
+  const blunderHead = rows.some((r) => r.blunder_rate != null) ? `<th data-sort="num">Blunders</th>` : "";
+  return `<section class="block${wide ? " wide" : ""}">
     <h3>${title}</h3>
     ${extra}
-    <table class="dense">
+    <table class="dense sortable">
       <thead><tr>
-        <th></th>
-        <th title="${escapeAttr(nLabel)}">n</th>
-        ${showWdl ? "<th>W–D–L</th>" : ""}
-        ${showScore ? "<th>Score</th>" : ""}
-        ${showAcc ? "<th>Acc</th>" : ""}
+        <th data-sort="label"></th>
+        <th data-sort="num" title="${escapeAttr(nLabel)}">n</th>
+        ${showWdl ? `<th data-sort="label">W–D–L</th>` : ""}
+        ${showScore ? `<th data-sort="num">Score</th>` : ""}
+        ${showAcc ? `<th data-sort="num">Acc</th>` : ""}
         ${blunderHead}
       </tr></thead>
       <tbody>${body}</tbody>
@@ -119,7 +117,7 @@ function materialBlock(rows) {
   if (!rows.length) return "<h3>Material</h3><p class='muted'>No imbalances in this filter.</p>";
   const body = rows
     .map(
-      (r) => `<tr data-query="">
+      (r) => `<tr data-query="${escapeAttr(r.query || "")}">
         <td>${escapeHtml(r.label || r.key)}</td>
         <td class="num">${r.n}</td>
         <td class="num">${wdl(r)}</td>
@@ -127,11 +125,11 @@ function materialBlock(rows) {
       </tr>`
     )
     .join("");
-  return `<section class="block">
+  return `<section class="block wide">
     <h3>Material</h3>
     <p class="muted">n is games that reached this imbalance. One game can land in several rows — do not add the n column.</p>
-    <table class="dense">
-      <thead><tr><th>Imbalance</th><th>n</th><th>W–D–L</th><th>Score</th></tr></thead>
+    <table class="dense sortable">
+      <thead><tr><th data-sort="label">Imbalance</th><th data-sort="num">n</th><th data-sort="label">W–D–L</th><th data-sort="num">Score</th></tr></thead>
       <tbody>${body}</tbody>
     </table>
   </section>`;
@@ -152,8 +150,8 @@ function phaseBlock(rows) {
   return `<section class="block">
     <h3>Phase</h3>
     <p class="muted">n is games that reached the phase. Accuracy is your moves in finished analyses only.</p>
-    <table class="dense">
-      <thead><tr><th></th><th>Games</th><th>Plies</th><th>Acc</th></tr></thead>
+    <table class="dense sortable">
+      <thead><tr><th data-sort="label"></th><th data-sort="num">Games</th><th data-sort="num">Plies</th><th data-sort="num">Acc</th></tr></thead>
       <tbody>${body}</tbody>
     </table>
   </section>`;
@@ -208,5 +206,60 @@ function escapeHtml(s) {
 function escapeAttr(s) {
   return escapeHtml(s);
 }
+
+function cellSortValue(td, kind) {
+  const text = (td.textContent || "").trim();
+  if (kind === "num") {
+    if (!text || text === "—" || text === "-") return null;
+    const n = parseFloat(text.replace(/,/g, "").replace(/%/g, ""));
+    return Number.isNaN(n) ? null : n;
+  }
+  return text;
+}
+
+function bindTableSort() {
+  if (bindTableSort.bound) return;
+  bindTableSort.bound = true;
+  document.addEventListener("click", (e) => {
+    const th = e.target.closest("table.sortable thead th");
+    if (!th) return;
+    e.stopPropagation();
+    const table = th.closest("table");
+    const headers = [...table.tHead.rows[0].cells];
+    const col = headers.indexOf(th);
+    if (col < 0) return;
+    const kind = th.dataset.sort === "num" ? "num" : "label";
+    const same = table.dataset.sortCol === String(col);
+    const dir = same ? Number(table.dataset.sortDir) * -1 : kind === "num" ? -1 : 1;
+    table.dataset.sortCol = String(col);
+    table.dataset.sortDir = String(dir);
+    const body = table.tBodies[0];
+    const rows = [...body.rows];
+    rows.sort((a, b) => {
+      const va = cellSortValue(a.cells[col], kind);
+      const vb = cellSortValue(b.cells[col], kind);
+      const aMiss = va == null || va === "";
+      const bMiss = vb == null || vb === "";
+      if (aMiss && bMiss) return 0;
+      if (aMiss) return 1;
+      if (bMiss) return -1;
+      if (typeof va === "number" && typeof vb === "number") return (va - vb) * dir;
+      return String(va).localeCompare(String(vb), undefined, { sensitivity: "base" }) * dir;
+    });
+    rows.forEach((row) => body.appendChild(row));
+    headers.forEach((h, i) => {
+      h.classList.toggle("sort-on", i === col);
+      let mark = h.querySelector(".dir");
+      if (!mark) {
+        mark = document.createElement("span");
+        mark.className = "dir";
+        h.appendChild(mark);
+      }
+      mark.textContent = i === col ? (dir === 1 ? "▲" : "▼") : "";
+    });
+  });
+}
+
+bindTableSort();
 
 window.api = api;

@@ -182,21 +182,27 @@ function clocksAt(p) {
 }
 
 function paintClocks() {
-  const el = document.getElementById("clocks");
-  if (!el || !game) return;
+  const topEl = document.getElementById("clock-top");
+  const botEl = document.getElementById("clock-bot");
+  if (!topEl || !botEl || !game) return;
   const c = clocksAt(ply);
   if (c.white == null && c.black == null) {
-    el.innerHTML = "";
+    topEl.innerHTML = "";
+    botEl.innerHTML = "";
+    topEl.className = "clock-bar";
+    botEl.className = "clock-bar";
     return;
   }
-  const low = (centis) => (centis != null && centis < 3000 ? "low" : "");
   const top = flipped ? "white" : game.game.you_color === "black" ? "white" : "black";
   const bot = top === "white" ? "black" : "white";
   const name = (side) => (side === "white" ? game.game.white : game.game.black);
-  el.innerHTML = `
-    <span class="${low(c[top])}">${escapeHtml(name(top))} ${formatClock(c[top]) || "—"}</span>
-    <span class="${low(c[bot])}">${escapeHtml(name(bot))} ${formatClock(c[bot]) || "—"}</span>
-  `;
+  const fill = (el, side) => {
+    const low = c[side] != null && c[side] < 3000;
+    el.className = "clock-bar" + (low ? " low" : "");
+    el.innerHTML = `<span class="clock-name">${escapeHtml(name(side))}</span><span class="clock-time">${formatClock(c[side]) || "—"}</span>`;
+  };
+  fill(topEl, top);
+  fill(botEl, bot);
 }
 
 function lichessUrl() {

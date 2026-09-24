@@ -1,12 +1,12 @@
 <!DOCTYPE html>
-<html lang="en" data-theme="dark">
+<html lang="en">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>ForkSight</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Mono:wght@400;600&family=Noto+Sans:wght@400;600;700&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Mono:wght@400;600&family=Noto+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/chessground@9.1.1/assets/chessground.base.css">
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/chessground@9.1.1/assets/chessground.brown.css">
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/chessground@9.1.1/assets/chessground.cburnett.css">
@@ -14,7 +14,7 @@
 </head>
 <body>
   <header class="mast">
-    <div class="brand">
+    <div class="topbar">
       <span class="wordmark">ForkSight</span>
       <nav>
         <button data-page="games" class="on">Games</button>
@@ -24,22 +24,29 @@
         <button data-page="board">Board</button>
         <button data-page="sql">SQL</button>
       </nav>
+      <div class="top-actions">
+        <button type="button" id="btn-theme" title="Toggle light mode">Light</button>
+        <button type="button" id="btn-settings">Your name</button>
+      </div>
     </div>
-    <form id="query-form" class="query-bar page-chrome" autocomplete="off">
-      <label for="q">Query</label>
-      <input id="q" name="q" spellcheck="false" placeholder='result:loss opening:"French Defense" year:2016'>
-      <button type="submit">Filter</button>
-      <button type="button" id="btn-clear" class="ghost">Clear</button>
-    </form>
-    <div id="filters" class="filters page-chrome"></div>
-    <div id="wdl" class="wdl-strip page-chrome hidden"></div>
-    <p id="grain" class="grain"></p>
-    <p id="cue" class="cue"></p>
+    <div class="chrome page-chrome">
+      <form id="query-form" class="query-bar" autocomplete="off">
+        <label class="sr" for="q">Query</label>
+        <input id="q" name="q" spellcheck="false" placeholder="Filter — fen, pieces:me=Q, phase:endgame">
+        <button type="submit">Filter</button>
+        <button type="button" id="btn-clear" class="text-btn">Clear</button>
+      </form>
+      <div id="filters" class="filters"></div>
+      <div id="wdl" class="wdl-strip hidden"></div>
+      <p id="grain" class="grain"></p>
+      <p id="cue" class="cue"></p>
+    </div>
   </header>
 
   <main>
     <section id="page-games" class="page on">
-      <div id="drop-zone" class="drop-zone">
+      <details class="import-panel" id="drop-zone">
+        <summary>Import games</summary>
         <div class="toolbar">
           <label class="file">
             Import PGN
@@ -54,44 +61,45 @@
           </form>
           <span id="import-report" class="muted"></span>
         </div>
-        <p class="drop-hint muted">Or drop a PGN / zip here.</p>
-      </div>
+        <p class="drop-hint muted">Or drop a PGN / zip on this panel.</p>
+      </details>
       <div id="review-root"></div>
-      <p class="hint">Results are yours (win / draw / loss), not the PGN 1-0. Accuracy is the Lichess formula from site evals or Stockfish. Click a row to replay.</p>
       <div id="games-empty" class="empty hidden">
         <p>No games in this filter. Pull from Lichess or import a PGN to start.</p>
       </div>
       <div id="pager" class="pager hidden"></div>
-      <table class="dense" id="games-table">
-        <thead>
-          <tr>
-            <th data-sort="date">Date</th>
-            <th data-sort="color">Color</th>
-            <th data-sort="opponent">Opponent</th>
-            <th class="num" data-sort="you_elo">Your elo</th>
-            <th class="num" data-sort="opp_elo">Opp elo</th>
-            <th class="num" data-sort="rating_diff">Δ</th>
-            <th class="num" data-sort="expected">Exp</th>
-            <th data-sort="tc_class">Time</th>
-            <th data-sort="opening">Opening</th>
-            <th data-sort="user_result">Result</th>
-            <th data-sort="termination">Ended</th>
-            <th class="num" data-sort="accuracy">Acc</th>
-          </tr>
-        </thead>
-        <tbody></tbody>
-      </table>
+      <div class="sheet">
+        <table class="dense" id="games-table">
+          <thead>
+            <tr>
+              <th data-sort="date">Date</th>
+              <th data-sort="color">Color</th>
+              <th data-sort="opponent">Opponent</th>
+              <th class="num" data-sort="you_elo">Your elo</th>
+              <th class="num" data-sort="opp_elo">Opp elo</th>
+              <th class="num" data-sort="rating_diff">Δ</th>
+              <th class="num" data-sort="expected">Exp</th>
+              <th data-sort="tc_class">Time</th>
+              <th data-sort="opening">Opening</th>
+              <th data-sort="user_result">Result</th>
+              <th data-sort="termination">Ended</th>
+              <th class="num" data-sort="accuracy">Acc</th>
+            </tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+      </div>
       <div id="pager-bottom" class="pager hidden"></div>
     </section>
 
     <section id="page-insights" class="page">
       <p class="hint">Accuracy uses the Lichess formula on your moves, only in finished analyses. A row with n under 5 is a count, not a rate — we hide the percentage.</p>
-      <section class="block">
+      <section class="block wide">
         <h3>Opening tree</h3>
         <p class="muted">Moves you actually played from the start, with your score. Click to go deeper.</p>
         <div id="opening-tree" class="tree"></div>
       </section>
-      <div id="insights-root"></div>
+      <div id="insights-root" class="insight-grid"></div>
       <details class="sql-preview">
         <summary>Generated SQL</summary>
         <pre id="insights-sql"></pre>
@@ -107,7 +115,7 @@
     <section id="page-analyze" class="page">
       <p class="lede">Stockfish scores every move with the Lichess accuracy formula. Depth 15 is a laptop compromise — it will miss some blitz tactics, which is why we do not pretend the tenth of a percent is exact. Use AC power. Games imported from Lichess already carry site evals.</p>
       <p id="engine-line" class="cue"></p>
-      <button type="button" id="btn-download-sf">Download Stockfish</button>
+      <button type="button" id="btn-download-sf" class="primary">Download Stockfish</button>
       <form id="analyze-form" class="settings">
         <details>
           <summary>Settings</summary>
@@ -122,7 +130,7 @@
           <label class="check"><input name="eco" type="checkbox"> Eco (half threads)</label>
         </details>
         <div class="row">
-          <button type="submit">Analyze unanalyzed games</button>
+          <button type="submit" class="primary">Analyze unanalyzed games</button>
           <button type="button" id="btn-pause" class="hidden">Pause</button>
           <button type="button" id="btn-resume" class="hidden">Resume</button>
           <button type="button" id="btn-stop" class="hidden">Stop after this game</button>
@@ -135,10 +143,11 @@
     <section id="page-board" class="page">
       <div id="board-empty" class="empty">Open a game from the list — or a turning point from recent losses.</div>
       <div class="board-layout hidden" id="board-wrap">
-        <div>
+        <div class="board-stack">
+          <div id="clock-top" class="clock-bar"></div>
           <div id="board" class="cg-wrap"></div>
-          <div id="clocks" class="clocks"></div>
-          <canvas id="eval-graph" width="512" height="104"></canvas>
+          <div id="clock-bot" class="clock-bar"></div>
+          <canvas id="eval-graph" width="512" height="88"></canvas>
           <div class="board-nav">
             <button type="button" id="btn-start" title="Start">«</button>
             <button type="button" id="btn-prev" title="Back">‹</button>
@@ -155,7 +164,7 @@
         <div class="board-side">
           <div id="board-facts"></div>
           <div class="row">
-            <button type="button" id="btn-analyze-game">Analyze this game</button>
+            <button type="button" id="btn-analyze-game" class="primary">Analyze this game</button>
           </div>
           <p id="board-analyze-status" class="muted"></p>
           <div id="turning-inline"></div>
@@ -170,7 +179,7 @@
       <div id="sql-examples" class="sql-examples"></div>
       <textarea id="sql-text" rows="8" spellcheck="false">SELECT tc_class, termination, COUNT(*) AS n FROM v_games GROUP BY 1, 2 ORDER BY n DESC</textarea>
       <div class="row">
-        <button type="button" id="sql-run">Run query</button>
+        <button type="button" id="sql-run" class="primary">Run query</button>
         <button type="button" id="sql-csv" class="ghost hidden">Copy CSV</button>
       </div>
       <div id="sql-out"></div>
@@ -183,8 +192,6 @@
     <label>Report depth
       <select id="report-depth"></select>
     </label>
-    <button type="button" id="btn-theme" title="Toggle light mode">Light</button>
-    <button type="button" id="btn-settings">Your name</button>
   </footer>
 
   <dialog id="settings-dialog">
@@ -198,7 +205,7 @@
       <label>Syzygy path <input name="syzygy_path"></label>
       <menu>
         <button value="cancel">Close</button>
-        <button id="settings-save" value="default">Save</button>
+        <button id="settings-save" value="default" class="primary">Save</button>
       </menu>
     </form>
   </dialog>

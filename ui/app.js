@@ -42,6 +42,49 @@ const TERM_CHIPS = [
   { label: "Abandon", value: "abandon" },
   { label: "Normal", value: "normal" },
 ];
+const PHASE_CHIPS = [
+  { label: "Any", value: "" },
+  { label: "Opening", value: "opening" },
+  { label: "Middlegame", value: "middlegame" },
+  { label: "Endgame", value: "endgame" },
+];
+const PIECE_LETTERS = ["Q", "R", "B", "N", "P"];
+const PIECE_GROUPS = [
+  { key: "me", label: "You have" },
+  { key: "opp", label: "They have" },
+  { key: "no", label: "Off the board" },
+];
+
+function parsePieces(spec) {
+  const groups = { me: new Set(), opp: new Set(), no: new Set() };
+  String(spec || "")
+    .split(",")
+    .forEach((part) => {
+      const i = part.indexOf("=");
+      if (i < 0) return;
+      let key = part.slice(0, i).trim().toLowerCase();
+      if (key === "op") key = "opp";
+      if (!groups[key]) return;
+      part
+        .slice(i + 1)
+        .toUpperCase()
+        .replace(/\+/g, "")
+        .split("")
+        .forEach((ch) => {
+          if (PIECE_LETTERS.includes(ch)) groups[key].add(ch);
+        });
+    });
+  return groups;
+}
+
+function piecesToken(groups) {
+  return PIECE_GROUPS.map(({ key }) => {
+    const letters = PIECE_LETTERS.filter((p) => groups[key].has(p)).join("");
+    return letters ? `${key}=${letters}` : "";
+  })
+    .filter(Boolean)
+    .join(",");
+}
 
 function todayISO() {
   const d = new Date();
@@ -113,6 +156,18 @@ function renderFilters() {
       return `<button type="button" data-year="${escapeAttr(c.year)}" data-since="${escapeAttr(c.since)}" data-until="${escapeAttr(c.until)}" class="${on ? "on" : ""}">${c.label}</button>`;
     })
     .join("");
+  const phase = PHASE_CHIPS.map(
+    (c) =>
+      `<button type="button" data-phase="${escapeAttr(c.value)}" class="${(map.phase || "") === c.value ? "on" : ""}">${c.label}</button>`
+  ).join("");
+  const picked = parsePieces(map.pieces);
+  const pieces = PIECE_GROUPS.map(({ key, label }) => {
+    const buttons = PIECE_LETTERS.map(
+      (letter) =>
+        `<button type="button" data-piece-group="${key}" data-piece="${letter}" class="${picked[key].has(letter) ? "on" : ""}" aria-pressed="${picked[key].has(letter)}">${letter}</button>`
+    ).join("");
+    return `<span class="group" role="group" aria-label="${escapeAttr(label)}">${chipLabel(label)}${buttons}</span>`;
+  }).join("");
   $("#filters").innerHTML = `
     <span class="group" role="radiogroup" aria-label="Time control">${chipLabel("Time")}${tc}</span>
     <span class="group" role="radiogroup" aria-label="Color">${chipLabel("Color")}${color}</span>
@@ -120,6 +175,9 @@ function renderFilters() {
     <span class="group" role="radiogroup" aria-label="How it ended">${chipLabel("Ended")}${term}</span>
     <span class="group" role="radiogroup" aria-label="Date">${chipLabel("When")}${dates}</span>
     <span class="group opp-wrap">${chipLabel("Opponent")}<input id="opp-search" type="search" placeholder="name" value="${escapeAttr(map.opponent || "")}"></span>
+    <span class="group" role="radiogroup" aria-label="Phase">${chipLabel("Phase")}${phase}</span>
+    ${pieces}
+    <span class="group">${chipLabel("Position")}<input id="fen-search" type="text" placeholder="Paste a FEN" spellcheck="false" value="${escapeAttr(map.fen || "")}" style="width:18rem;max-width:100%"></span>
   `;
   $("#filters").querySelectorAll("[data-setq]").forEach((b) => {
     b.onclick = () => {
@@ -150,6 +208,30 @@ function renderFilters() {
     };
     opp.onchange = () => setTokens({ opponent: opp.value.trim() });
   }
+  $("#filters").querySelectorAll("[data-phase]").forEach((b) => {
+    b.onclick = () => setTokens({ phase: b.dataset.phase });
+  });
+  $("#filters").querySelectorAll("[data-piece]").forEach((b) => {
+    b.onclick = () => {
+      const groups = parsePieces(tokenMap(state.q).pieces);
+      const key = b.dataset.pieceGroup;
+      const letter = b.dataset.piece;
+      if (groups[key].has(letter)) groups[key].delete(letter);
+      else groups[key].add(letter);
+      setTokens({ pieces: piecesToken(groups) });
+    };
+  });
+  const fen = $("#fen-search");
+  if (fen) {
+    const applyFen = () => setTokens({ fen: fen.value.trim() });
+    fen.onkeydown = (e) => {
+      if (e.key === "Enter") {
+        e.preventDefault();
+        applyFen();
+      }
+    };
+    fen.onchange = applyFen;
+  }
 }
 
 function chipLabel(t) {
@@ -167,13 +249,20 @@ function paintWdl(data) {
   const perfCls = perf == null ? "" : perf >= 0 ? "plus" : "minus";
   const perfTxt = perf == null ? "—" : (perf >= 0 ? "+" : "") + (perf * 100).toFixed(1) + " vs exp";
   el.innerHTML = `
-    <span class="stat">${data.games} games</span>
-    <span class="stat win"><b>${data.wins ?? 0}</b> W</span>
-    <span class="stat draw"><b>${data.draws ?? 0}</b> D</span>
-    <span class="stat loss"><b>${data.losses ?? 0}</b> L</span>
-    <span class="stat">Score <b>${pct(data.score)}</b></span>
-    <span class="stat">Expected <b>${pct(data.expected)}</b></span>
-    <span class="stat ${perfCls}"><b>${perfTxt}</b></span>
+    <div class="stats">
+      <span class="stat"><b>${data.games}</b> games</span>
+      <span class="stat win"><b>${data.wins ?? 0}</b> W</span>
+      <span class="stat draw"><b>${data.draws ?? 0}</b> D</span>
+      <span class="stat loss"><b>${data.losses ?? 0}</b> L</span>
+      <span class="stat">Score <b>${pct(data.score)}</b></span>
+      <span class="stat">Expected <b>${pct(data.expected)}</b></span>
+      <span class="stat ${perfCls}"><b>${perfTxt}</b></span>
+    </div>
+    <div class="wdl-bar" aria-hidden="true">
+      <span class="w" style="flex:${Math.max(data.wins || 0, 0)}"></span>
+      <span class="d" style="flex:${Math.max(data.draws || 0, 0)}"></span>
+      <span class="l" style="flex:${Math.max(data.losses || 0, 0)}"></span>
+    </div>
   `;
 }
 
@@ -333,7 +422,7 @@ function paintGames(data) {
         <td class="num">${exp}</td>
         <td>${r.tc_class || ""}</td>
         <td>${escapeHtml(r.opening || "")}</td>
-        <td class="result ${ur || ""}">${resultLabel(ur)}</td>
+        <td><span class="pill ${ur || ""}">${resultLabel(ur)}</span></td>
         <td>${escapeHtml(r.termination_label || r.termination || "")} ${evalBadge(r.eval_source)}</td>
         <td class="num" title="Lichess accuracy, finished analyses only">${accCell}</td>
       </tr>`;
@@ -388,7 +477,7 @@ function paintReview(data) {
   root.innerHTML =
     need +
     (losses.length
-      ? `<section class="review"><h3>Recent losses</h3><p class="muted">The three moves that cost the most win probability. Click one to stand on that square.</p>${cards}</section>`
+      ? `<section class="review"><h3>Recent losses</h3><p class="muted">The three moves that cost the most win probability. Click one to stand on that square.</p><div class="loss-grid">${cards}</div></section>`
       : "");
   const goAnalyze = $("#review-analyze");
   if (goAnalyze) goAnalyze.onclick = () => show("analyze");
@@ -404,8 +493,18 @@ function paintInsights(data) {
   $("#grain").textContent = grainLine(data);
   paintWdl(data);
   $("#insights-sql").textContent = data.sql || "";
-  const g = data.groups;
+  const g = data.groups || {};
+  const positions =
+    g.positions && g.positions.length
+      ? groupTable("Positions you reached", g.positions, { nLabel: "games", wide: true })
+      : "";
+  const pieces =
+    g.pieces && g.pieces.length
+      ? groupTable("Pieces on the board", g.pieces, { nLabel: "games", wide: true })
+      : "";
   $("#insights-root").innerHTML =
+    positions +
+    pieces +
     groupTable("Year", g.year, { nLabel: "games" }) +
     groupTable("Color", g.color, { nLabel: "games" }) +
     groupTable("Time control", g.time_class, { nLabel: "games" }) +
@@ -416,8 +515,8 @@ function paintInsights(data) {
     groupTable("In the session", g.session, { nLabel: "games" }) +
     groupTable("When you were winning or losing", g.conversion, { nLabel: "games" }) +
     groupTable("Time trouble", g.time_trouble, { nLabel: "your moves" }) +
-    groupTable("Opening", g.opening, { nLabel: "games" }) +
-    groupTable("Opponents", g.opponent, { nLabel: "games" }) +
+    groupTable("Opening", g.opening, { nLabel: "games", wide: true }) +
+    groupTable("Opponents", g.opponent, { nLabel: "games", wide: true }) +
     groupTable("Your castle", g.your_castle, { nLabel: "games" }) +
     groupTable("Both kings", g.kings, { nLabel: "games" }) +
     phaseBlock(g.phase || []) +
@@ -826,7 +925,7 @@ setInterval(() => {
 }, 2000);
 
 window.addEventListener("DOMContentLoaded", async () => {
-  applyTheme(localStorage.getItem("forksight-theme") || "dark");
+  applyTheme(localStorage.getItem("forksight-theme") || "light");
   if (window.ForkSightBoard) window.ForkSightBoard.mountBoard();
   try {
     const s = await api.get("/api/settings");
