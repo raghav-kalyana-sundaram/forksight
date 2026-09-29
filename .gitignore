@@ -15,3 +15,8 @@ build/
 *.duckdb.wal
 .env
 .env.local
+
+# Local notes and personal game exports
+.impeccable.md
+Chess_Insights_Spec_v1.1.docx
+/lichess_*.pgn
