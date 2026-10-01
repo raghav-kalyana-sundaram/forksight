@@ -29,3 +29,19 @@ A desktop window, after `pip install -e ".[desktop]"`:
 ```bash
 python -m app.server desktop
 ```
+
+## Queries
+
+Tokens are `key:value`, combined with AND. A bare word searches opening names and opponent names.
+
+```
+tc:blitz color:white
+material:KRPvKP phase:endgame
+castled:long
+eco:B90
+opening:Sicilian rating:1600-1800
+pieces:me=R+P,opp=N,no=Q
+entry:winning analyzed:yes
+```
+
+A game matches a ply-level token when at least one ply satisfies it. Material rows can share a game, so those counts do not add up to the filter. Chess960 stays out of ECO, the opening explorer, and castling rollups. Games that match none of your aliases are stored and stay out of personal rollups unless you include them.
